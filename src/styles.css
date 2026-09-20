@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #09090b;
+  --color-surface: #111114;
+  --color-elevated: #18181c;
+  --color-inset: #0c0c0e;
+  --color-fg: #e8e6e1;
+  --color-muted: #8b8b94;
+  --color-faint: #5c5c66;
+  --color-accent: #7d9a8a;
+  --color-accent-fg: #09090b;
+  --color-long: #3d8a68;
+  --color-short: #c45c4a;
+  --color-warn: #c4a574;
+  --color-border: color-mix(in oklab, #e8e6e1 12%, transparent);
+  --color-border-strong: color-mix(in oklab, #e8e6e1 22%, transparent);
+  --color-ring: #7d9a8a;
+
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  --text-xxs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  --shadow-border: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent);
+  --shadow-lift: 0 0 0 1px color-mix(in oklab, #e8e6e1 10%, transparent),
+    0 18px 40px -24px rgb(0 0 0 / 0.7);
+  --max-width-desk: 87.5rem;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    min-height: 100dvh;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    overflow-x: hidden;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.tape {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--color-accent) 0%, transparent),
+    color-mix(in oklab, var(--color-accent) 18%, transparent) 50%,
+    color-mix(in oklab, var(--color-accent) 0%, transparent)
+  );
+}

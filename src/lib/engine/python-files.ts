@@ -1,0 +1,18 @@
+export const PYTHON_FILES = [
+  { path: "README.md", label: "Setup guide" },
+  { path: "requirements.txt", label: "Dependencies" },
+  { path: "env.example", label: "Environment template" },
+  { path: "config.py", label: "Config" },
+  { path: "main.py", label: "Entrypoint" },
+  { path: "models.py", label: "Models" },
+  { path: "data_ingestion.py", label: "DataIngestion" },
+  { path: "signal_engine.py", label: "SignalEngine" },
+  { path: "portfolio.py", label: "PortfolioManager" },
+  { path: "order_executor.py", label: "OrderExecutor" },
+  { path: "risk_manager.py", label: "RiskManager" },
+  { path: "telegram_reporter.py", label: "TelegramReporter" },
+  { path: "persistence.py", label: "SQLite recovery" },
+  { path: "rate_limit.py", label: "Token bucket" },
+  { path: "latency_bench.py", label: "Latency benchmark" },
+  { path: "deploy/lagforge.service", label: "systemd unit" },
+] as const;
