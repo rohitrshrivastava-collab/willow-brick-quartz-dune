@@ -1,11 +1,11 @@
 import { i as __toESM } from "../_runtime.mjs";
 import { L as require_react, v as require_jsx_runtime } from "../_libs/@tanstack/react-router+[...].mjs";
-import { a as Play, c as GitBranch, d as ChartColumn, f as Bell, i as RotateCcw, l as Gauge, n as Settings2, o as Pause, p as Activity, r as ScrollText, s as Layers, u as CodeXml } from "../_libs/lucide-react.mjs";
-import { a as roundQty, i as minQty, n as DEFAULT_CONFIG, r as hurdlePct } from "./router--sKZyZsq.mjs";
+import { _ as Activity, a as RotateCcw, c as Lock, d as Gauge, f as ExternalLink, g as Bell, h as ChartColumn, i as ScrollText, l as Layers, m as CodeXml, o as Play, p as Copy, r as Settings2, s as Pause, t as Wallet, u as GitBranch } from "../_libs/lucide-react.mjs";
+import { a as clampAlloc, c as roundQty, d as venueShort, i as applyVenue, l as tradingEquity, n as DEFAULT_CONFIG, o as hurdlePct, r as VENUE_PROFILE, s as minQty, u as venueLabel } from "./router-BQnqGsw6.mjs";
 import { n as clsx, t as cva } from "../_libs/class-variance-authority+clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { n as create, t as persist } from "../_libs/zustand.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-DpLwhkzU.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-CaT-iJEQ.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function cn(...inputs) {
@@ -73,11 +73,6 @@ function uid(prefix) {
 function mid(b) {
 	return (b.bid + b.ask) / 2;
 }
-/** Lowest LONG exit / highest SHORT exit that is net-flat after round-trip taker fees. */
-function scratchPx(side, entry, entryFee, exitFee) {
-	if (side === "LONG") return entry * (1 + entryFee) / Math.max(1e-9, 1 - exitFee);
-	return entry * (1 - entryFee) / (1 + exitFee);
-}
 function netUsdt(side, entry, exit, qty, entryFee, exitFee) {
 	return (side === "LONG" ? (exit - entry) * qty : (entry - exit) * qty) - (entry * qty * entryFee + exit * qty * exitFee);
 }
@@ -94,12 +89,14 @@ function createEngineState(cfg, now = Date.now()) {
 	return {
 		cfg,
 		status: "idle",
+		halted: false,
+		haltReason: null,
 		sessionStart: null,
 		lastTick: now,
 		usdtInr: 96,
 		fxSource: "seed",
 		venue: "binance",
-		equityInr: cfg.startingCapitalInr,
+		equityInr: tradingEquity(cfg, 0),
 		realizedNetInr: 0,
 		realizedGrossUsdt: 0,
 		realizedFeesUsdt: 0,
@@ -171,9 +168,9 @@ function sizeOrder(cfg, symbol, px, tobQty, equityInr, usdtInr) {
 function closePosition(state, pos, exitPx, reason, ts) {
 	const qty = pos.filledQty;
 	const gross = pos.side === "LONG" ? (exitPx - pos.entryPx) * qty : (pos.entryPx - exitPx) * qty;
-	(pos.entryPx * qty + exitPx * qty) * (state.cfg.entryTakerFee + state.cfg.exitTakerFee) * .5 * 2;
 	const feeAmt = pos.entryPx * qty * state.cfg.entryTakerFee + exitPx * qty * state.cfg.exitTakerFee;
 	const net = gross - feeAmt;
+	if (reason !== "STOP" && reason !== "KILL" && net < 0) return false;
 	const netInr = net * state.usdtInr;
 	const trade = {
 		id: uid("tr"),
@@ -199,9 +196,37 @@ function closePosition(state, pos, exitPx, reason, ts) {
 	state.realizedNetInr += netInr;
 	state.realizedGrossUsdt += gross;
 	state.realizedFeesUsdt += feeAmt;
-	state.equityInr = state.cfg.startingCapitalInr + state.realizedNetInr;
+	state.equityInr = tradingEquity(state.cfg, state.realizedNetInr);
 	const sign = net >= 0 ? "+" : "";
 	pushAlert(state, "EXIT", `${pos.side} ${pos.symbol.replace("USDT", "")} ${reason}`, `Fill ${fmtPx(exitPx)} · qty ${qty} · net ${sign}₹${netInr.toFixed(2)} (${sign}${net.toFixed(4)} USDT) · hold ${trade.holdSec.toFixed(1)}s · PAPER`, ts);
+	return true;
+}
+function markUnrealizedInr(state) {
+	return state.positions.reduce((s, p) => {
+		const C = state.lag[p.symbol];
+		if (!C) return s;
+		const mark = p.side === "LONG" ? C.bid : C.ask;
+		return s + netUsdt(p.side, p.entryPx, mark, p.filledQty, state.cfg.entryTakerFee, state.cfg.exitTakerFee) * state.usdtInr;
+	}, 0);
+}
+function flattenKill(state, ts) {
+	for (const pos of [...state.positions]) {
+		const C = state.lag[pos.symbol];
+		closePosition(state, pos, C ? pos.side === "LONG" ? C.bid : C.ask : pos.entryPx, "KILL", ts);
+	}
+	state.halted = true;
+	state.haltReason = "MAX_LOSS";
+	state.status = "paused";
+	pushAlert(state, "WARN", "Session max loss hit — loop stopped", `Realized ${state.realizedNetInr >= 0 ? "+" : ""}₹${state.realizedNetInr.toFixed(2)} · cap ₹${state.cfg.maxSessionLossInr.toFixed(0)} · ${state.cfg.lagVenue}. Open slots flattened. Raise the cap or reset the session to arm again.`, ts);
+}
+function maybeSessionKill(state, ts) {
+	const cap = state.cfg.maxSessionLossInr;
+	if (!(cap > 0) || state.halted) return state.halted;
+	if (-(state.realizedNetInr + markUnrealizedInr(state)) + 1e-9 >= cap) {
+		flattenKill(state, ts);
+		return true;
+	}
+	return false;
 }
 function fmtPx(px) {
 	if (px >= 1e3) return px.toFixed(2);
@@ -257,10 +282,12 @@ function ingestSnapshot(state, tickers, usdtInr, fxSource, venue, now) {
 	state.fxSource = fxSource;
 	state.venue = venue;
 	state.ticks += 1;
+	state.equityInr = tradingEquity(state.cfg, state.realizedNetInr);
 	const lead = { ...state.lead };
 	for (const t of tickers) lead[t.symbol] = t;
 	state.lead = lead;
-	const nextUniverse = screenUniverse(tickers, state.cfg, usdtInr, state.equityInr);
+	const bankroll = state.equityInr;
+	const nextUniverse = screenUniverse(tickers, state.cfg, usdtInr, bankroll);
 	if (nextUniverse.length) state.universe = nextUniverse;
 	state.delayBuf.push({
 		t: now,
@@ -317,7 +344,7 @@ function ingestSnapshot(state, tickers, usdtInr, fxSource, venue, now) {
 		const leadMid = mid(L);
 		const longDiv = (leadMid - C.ask) / C.ask;
 		const shortDiv = (C.bid - leadMid) / C.bid;
-		const slotUsdt = state.equityInr / state.cfg.slotCount / usdtInr;
+		const slotUsdt = bankroll / state.cfg.slotCount / usdtInr;
 		const minNotional = lot * C.ask;
 		let skip = null;
 		if (minNotional > slotUsdt * state.cfg.leverage) skip = "min lot > slot";
@@ -348,36 +375,35 @@ function ingestSnapshot(state, tickers, usdtInr, fxSource, venue, now) {
 		if (!C) continue;
 		const mark = pos.side === "LONG" ? C.bid : C.ask;
 		const net = netUsdt(pos.side, pos.entryPx, mark, pos.filledQty, state.cfg.entryTakerFee, state.cfg.exitTakerFee);
-		const scratch = scratchPx(pos.side, pos.entryPx, state.cfg.entryTakerFee, state.cfg.exitTakerFee);
-		if (net >= 0) {
-			const tightened = pos.side === "LONG" ? Math.max(pos.stopPx, scratch) : Math.min(pos.stopPx, scratch);
-			if (!pos.armedBreakeven || tightened !== pos.stopPx) {
-				const next = {
-					...pos,
-					armedBreakeven: true,
-					stopPx: tightened
-				};
-				state.positions = state.positions.map((p) => p.id === pos.id ? next : p);
-				Object.assign(pos, next);
-			}
+		if (net > 0 && !pos.armedBreakeven) {
+			const next = {
+				...pos,
+				armedBreakeven: true
+			};
+			state.positions = state.positions.map((p) => p.id === pos.id ? next : p);
+			Object.assign(pos, next);
 		}
-		if (pos.side === "LONG" && C.bid >= pos.targetPx) {
+		if (pos.side === "LONG" && C.bid >= pos.targetPx && net > 0) {
 			closePosition(state, pos, C.bid, "TARGET", now);
 			continue;
 		}
-		if (pos.side === "SHORT" && C.ask <= pos.targetPx) {
+		if (pos.side === "SHORT" && C.ask <= pos.targetPx && net > 0) {
 			closePosition(state, pos, C.ask, "TARGET", now);
 			continue;
 		}
 		if (pos.side === "LONG" && C.bid <= pos.stopPx) {
-			closePosition(state, pos, C.bid, pos.armedBreakeven ? "SCRATCH" : "STOP", now);
+			closePosition(state, pos, C.bid, "STOP", now);
 			continue;
 		}
 		if (pos.side === "SHORT" && C.ask >= pos.stopPx) {
-			closePosition(state, pos, C.ask, pos.armedBreakeven ? "SCRATCH" : "STOP", now);
+			closePosition(state, pos, C.ask, "STOP", now);
 			continue;
 		}
-		if (now >= pos.timeoutTs && net >= 0) closePosition(state, pos, mark, "TIMEOUT", now);
+		if (now >= pos.timeoutTs && net > 0) closePosition(state, pos, mark, "TIMEOUT", now);
+	}
+	if (maybeSessionKill(state, now)) {
+		maybeFlushHour(state, now);
+		return state;
 	}
 	if (state.positions.length < state.cfg.slotCount) for (const symbol of state.universe) {
 		if (state.positions.some((p) => p.symbol === symbol)) continue;
@@ -400,15 +426,19 @@ function ingestSnapshot(state, tickers, usdtInr, fxSource, venue, now) {
 			tobQty = C.bidQty;
 		}
 		if (!side || px <= 0) continue;
-		const sized = sizeOrder(state.cfg, symbol, px, tobQty, state.equityInr, usdtInr);
+		const sized = sizeOrder(state.cfg, symbol, px, tobQty, bankroll, usdtInr);
 		if (sized.qty <= 0) continue;
 		const fillFrac = .86 + Math.random() * .14;
 		const filledQty = roundQty(sized.qty * fillFrac, minQty(symbol));
 		if (filledQty < minQty(symbol)) continue;
 		const slip = Math.min(state.cfg.maxSlippagePct, 15e-5 + Math.random() * 2e-4);
 		const fillPx = side === "LONG" ? px * (1 + slip) : px * (1 - slip);
+		const halfSpread = Math.max(0, (C.ask - C.bid) / 2);
+		const expectedExit = side === "LONG" ? pair.leadMid - halfSpread : pair.leadMid + halfSpread;
+		if (netUsdt(side, fillPx, expectedExit, filledQty, state.cfg.entryTakerFee, state.cfg.exitTakerFee) <= 0) continue;
 		const vol = state.vol[symbol] ?? 4e-4;
-		const stopPct = Math.max(state.cfg.minStopPct, state.cfg.volStopMult * vol);
+		const spreadFrac = fillPx > 0 ? (C.ask - C.bid) / fillPx : 0;
+		const stopPct = Math.max(state.cfg.minStopPct, state.cfg.volStopMult * vol, spreadFrac * 3);
 		const target = pair.leadMid;
 		const stopPx = side === "LONG" ? fillPx * (1 - stopPct) : fillPx * (1 + stopPct);
 		const latencyMs = 7 + Math.random() * 18;
@@ -445,12 +475,11 @@ function sessionStats(state) {
 	const losses = trades.filter((t) => t.netUsdt <= 0).length;
 	const n = trades.length;
 	const lockedMargin = state.positions.reduce((s, p) => s + p.notionalInr / p.leverage, 0);
-	const unrealized = state.positions.reduce((s, p) => {
-		const C = state.lag[p.symbol];
-		if (!C) return s;
-		const mark = p.side === "LONG" ? C.bid : C.ask;
-		return s + (p.side === "LONG" ? (mark - p.entryPx) * p.qty : (p.entryPx - mark) * p.qty) * state.usdtInr;
-	}, 0);
+	const unrealized = markUnrealizedInr(state);
+	const sessionPnl = state.realizedNetInr + unrealized;
+	const lossUsed = Math.max(0, -sessionPnl);
+	const walletInr = state.cfg.startingCapitalInr + state.realizedNetInr + unrealized;
+	const allocatedInr = tradingEquity(state.cfg, 0);
 	return {
 		trades: n,
 		wins,
@@ -462,6 +491,11 @@ function sessionStats(state) {
 		lockedMargin,
 		unrealized,
 		markEquity: state.equityInr + unrealized,
+		walletInr,
+		allocatedInr,
+		sessionPnl,
+		lossUsed,
+		lossRemaining: Math.max(0, state.cfg.maxSessionLossInr - lossUsed),
 		hours: state.sessionStart ? (state.lastTick - state.sessionStart) / 36e5 : 0
 	};
 }
@@ -481,6 +515,10 @@ var PYTHON_FILES = [
 	{
 		path: "config.py",
 		label: "Config"
+	},
+	{
+		path: "venues.py",
+		label: "Venue profiles"
 	},
 	{
 		path: "main.py",
@@ -507,6 +545,10 @@ var PYTHON_FILES = [
 		label: "OrderExecutor"
 	},
 	{
+		path: "wallet.py",
+		label: "Wallet fetch"
+	},
+	{
 		path: "risk_manager.py",
 		label: "RiskManager"
 	},
@@ -531,9 +573,22 @@ var PYTHON_FILES = [
 		label: "systemd unit"
 	}
 ];
+function nextConfig(cfg, partial) {
+	let next = {
+		...cfg,
+		...partial,
+		paperTrading: true
+	};
+	if (partial.lagVenue && partial.lagVenue !== cfg.lagVenue) next = applyVenue(next, partial.lagVenue);
+	if (partial.allocPct != null) next.allocPct = clampAlloc(partial.allocPct);
+	if (partial.maxSessionLossInr != null) next.maxSessionLossInr = Math.max(0, partial.maxSessionLossInr);
+	if (partial.startingCapitalInr != null) next.startingCapitalInr = Math.max(0, partial.startingCapitalInr);
+	return next;
+}
 var useDesk = create()(persist((set, get) => ({
 	view: "desk",
 	hydrated: false,
+	liveIntent: false,
 	engine: createEngineState(DEFAULT_CONFIG),
 	feed: {
 		lastOk: false,
@@ -544,19 +599,28 @@ var useDesk = create()(persist((set, get) => ({
 	latency: [],
 	setView: (view) => set({ view }),
 	setHydrated: () => set({ hydrated: true }),
-	patchConfig: (partial) => set((s) => ({ engine: {
-		...s.engine,
-		cfg: {
-			...s.engine.cfg,
-			...partial,
-			paperTrading: true
-		}
-	} })),
+	setLiveIntent: (live) => set({ liveIntent: live }),
+	setLagVenue: (venue) => get().patchConfig({ lagVenue: venue }),
+	patchConfig: (partial) => set((s) => {
+		const cfg = nextConfig(s.engine.cfg, partial);
+		return { engine: {
+			...s.engine,
+			cfg,
+			equityInr: tradingEquity(cfg, s.engine.realizedNetInr)
+		} };
+	}),
 	start: () => set((s) => {
+		if (s.engine.halted) {
+			const stats = sessionStats(s.engine);
+			const cap = s.engine.cfg.maxSessionLossInr;
+			if (cap > 0 && stats.lossUsed >= cap) return s;
+		}
 		const now = Date.now();
 		return { engine: {
 			...s.engine,
 			status: "running",
+			halted: false,
+			haltReason: null,
 			sessionStart: s.engine.sessionStart ?? now,
 			hourBucket: s.engine.hourBucket.start === 0 ? {
 				start: now,
@@ -609,14 +673,15 @@ var useDesk = create()(persist((set, get) => ({
 	} })),
 	pushLatency: (sample) => set((s) => ({ latency: [sample, ...s.latency].slice(0, 40) }))
 }), {
-	name: "lagforge-desk-v2",
+	name: "lagforge-desk-v4",
 	partialize: (s) => ({
 		engine: {
 			...s.engine,
 			status: s.engine.status === "running" ? "paused" : s.engine.status,
 			delayBuf: []
 		},
-		view: s.view
+		view: s.view,
+		liveIntent: false
 	}),
 	onRehydrateStorage: () => (state) => {
 		state?.setHydrated();
@@ -660,6 +725,9 @@ function clsDelta(n) {
 	if (n < 0) return "text-short";
 	return "text-muted";
 }
+var REPO_PAGE = "https://github.com/rohitrshrivastava-collab/lagforge-bot";
+var REPO_CLONE = `${REPO_PAGE}.git`;
+var REPO_ZIP = `${REPO_PAGE}/archive/refs/heads/main.zip`;
 var NAV = [
 	{
 		id: "desk",
@@ -715,6 +783,8 @@ function DeskApp() {
 	const start = useDesk((s) => s.start);
 	const stop = useDesk((s) => s.stop);
 	const resetSession = useDesk((s) => s.resetSession);
+	const liveIntent = useDesk((s) => s.liveIntent);
+	const setLiveIntent = useDesk((s) => s.setLiveIntent);
 	const status = engine.status;
 	const pollMs = engine.cfg.pollMs;
 	(0, import_react.useEffect)(() => {
@@ -759,21 +829,32 @@ function DeskApp() {
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
 									className: "font-sans text-xl font-medium tracking-tight text-balance",
 									children: "LAGFORGE"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 									className: "text-xxs uppercase tracking-[0.18em] text-muted",
-									children: "Binance → CoinSwitch PRO"
+									children: ["Binance → ", venueLabel(engine.cfg.lagVenue)]
 								})]
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "flex flex-wrap items-center gap-2",
 								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, {
-										tone: "accent",
-										children: "PAPER"
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(VenueToggle, { compact: true }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex rounded-sm shadow-[var(--shadow-border)]",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											onClick: () => setLiveIntent(false),
+											className: cn("h-8 px-3 text-xxs font-medium uppercase tracking-wider", !liveIntent ? "bg-accent text-accent-fg" : "text-muted"),
+											children: "Paper"
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											onClick: () => setLiveIntent(true),
+											className: cn("h-8 px-3 text-xxs font-medium uppercase tracking-wider", liveIntent ? "bg-short text-fg" : "text-muted"),
+											children: "Live"
+										})]
 									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, { children: engine.venue.split(" ")[0] || "FEED" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, { children: venueShort(engine.cfg.lagVenue) }),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, {
-										tone: status === "running" ? "long" : "muted",
-										children: status === "running" ? "LIVE LOOP" : status === "paused" ? "PAUSED" : "ARMED"
+										tone: engine.halted ? "short" : status === "running" ? "long" : "muted",
+										children: engine.halted ? "MAX LOSS" : status === "running" ? "LOOP ON" : status === "paused" ? "PAUSED" : "ARMED"
 									})
 								]
 							})]
@@ -782,25 +863,26 @@ function DeskApp() {
 							className: "grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
-									label: "Mark equity",
-									value: inr(stats.markEquity, 0)
+									label: `${venueShort(engine.cfg.lagVenue)} paper wallet`,
+									value: inr(stats.walletInr, 0)
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
+									label: `Allocated ${engine.cfg.allocPct}%`,
+									value: inr(stats.allocatedInr, 0)
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
 									label: "Session net",
-									value: inr(engine.realizedNetInr),
-									tone: engine.realizedNetInr
+									value: inr(stats.sessionPnl),
+									tone: stats.sessionPnl
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
-									label: "Free margin",
-									value: inr(stats.freeInr, 0)
+									label: "Loss remaining",
+									value: engine.cfg.maxSessionLossInr > 0 ? inr(stats.lossRemaining, 0) : "off",
+									tone: engine.halted ? -1 : stats.lossRemaining
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
 									label: "Open slots",
 									value: `${engine.positions.length}/${engine.cfg.slotCount}`
-								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
-									label: "Win rate",
-									value: `${stats.winRate.toFixed(0)}% · ${stats.trades} tr`
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
 									label: "USDT/INR",
@@ -818,7 +900,12 @@ function DeskApp() {
 								}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, {
 									variant: "accent",
 									onClick: start,
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Play, { className: "size-4" }), " Start paper loop"]
+									disabled: engine.halted && engine.cfg.maxSessionLossInr > 0 && stats.lossUsed >= engine.cfg.maxSessionLossInr,
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Play, { className: "size-4" }),
+										" ",
+										engine.halted && stats.lossUsed >= engine.cfg.maxSessionLossInr ? "Halted — raise cap or reset" : "Start paper loop"
+									]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, {
 									variant: "ghost",
@@ -830,20 +917,45 @@ function DeskApp() {
 									children: [
 										"₹",
 										engine.cfg.startingCapitalInr.toLocaleString("en-IN"),
-										" · ",
+										" wallet · ",
+										engine.cfg.allocPct,
+										"% in play · ",
 										engine.cfg.slotCount,
-										" slots ·",
-										" ",
+										" slots · ",
 										engine.cfg.leverage,
 										"× · hurdle ",
 										pct(hurdle),
-										" · lag ",
-										engine.cfg.lagMs,
-										"ms"
+										" ·",
+										" ",
+										venueShort(engine.cfg.lagVenue)
 									]
 								})
 							]
-						})
+						}),
+						engine.halted ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "rounded-md bg-short/15 px-3 py-3 text-sm text-pretty",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "font-medium text-short",
+								children: "Session max loss hit. Trading is stopped."
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-1 text-muted",
+								children: "Open slots were flattened. Raise the max-loss cap or reset the session before starting the loop again."
+							})]
+						}) : null,
+						liveIntent ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "rounded-md bg-short/15 px-3 py-3 text-sm text-pretty",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+								className: "font-medium text-short",
+								children: [
+									"This desk cannot place ",
+									venueLabel(engine.cfg.lagVenue),
+									" orders."
+								]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-1 text-muted",
+								children: "Do not send API keys in chat and do not paste them here. Live trading only runs on the Python bot on your machine: keys in a local .env, PAPER_TRADING=false, and CONFIRM_LIVE=YES. The loop you start in this preview stays paper."
+							})]
+						}) : null
 					]
 				})
 			}),
@@ -910,9 +1022,266 @@ function Pill({ children, tone = "muted" }) {
 		className: cn("rounded-sm px-2 py-1 text-xxs font-medium uppercase tracking-wider", {
 			muted: "text-muted shadow-[var(--shadow-border)]",
 			accent: "text-accent-fg bg-accent",
-			long: "text-long shadow-[var(--shadow-border)]"
+			long: "text-long shadow-[var(--shadow-border)]",
+			short: "text-short shadow-[var(--shadow-border)]"
 		}[tone]),
 		children
+	});
+}
+function CopyCloneButton() {
+	const [copied, setCopied] = (0, import_react.useState)(false);
+	async function copy() {
+		try {
+			await navigator.clipboard.writeText(REPO_CLONE);
+			setCopied(true);
+			window.setTimeout(() => setCopied(false), 2e3);
+		} catch {
+			setCopied(false);
+		}
+	}
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+		type: "button",
+		onClick: () => void copy(),
+		className: "inline-flex h-11 items-center gap-2 rounded-md bg-fg px-4 text-sm font-medium text-bg",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Copy, { className: "size-4" }), copied ? "Copied" : "Copy GitHub clone URL"]
+	});
+}
+function DownloadPackButton() {
+	const [busy, setBusy] = (0, import_react.useState)(false);
+	const [note, setNote] = (0, import_react.useState)(null);
+	async function save() {
+		setBusy(true);
+		setNote(null);
+		try {
+			const res = await fetch("/api/bot-zip", { cache: "no-store" });
+			if (!res.ok) throw new Error("pack missing");
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = "lagforge-bot.zip";
+			a.rel = "noopener";
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			window.setTimeout(() => URL.revokeObjectURL(url), 4e3);
+			setNote("If Quick Heal blocks this preview, skip this button. Use GitHub instead.");
+		} catch {
+			setNote("This preview blocked the save. Open GitHub and clone or download the zip there.");
+		} finally {
+			setBusy(false);
+		}
+	}
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "flex min-w-0 flex-col gap-2",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+			type: "button",
+			onClick: () => void save(),
+			disabled: busy,
+			className: "inline-flex h-11 items-center rounded-md px-4 text-sm text-muted shadow-[var(--shadow-border)] disabled:opacity-60",
+			children: busy ? "Preparing zip…" : "Last resort: zip from this preview"
+		}), note ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "text-xs text-pretty text-muted",
+			children: note
+		}) : null]
+	});
+}
+function ModePanel() {
+	const liveIntent = useDesk((s) => s.liveIntent);
+	const setLiveIntent = useDesk((s) => s.setLiveIntent);
+	const venue = useDesk((s) => s.engine.cfg.lagVenue);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "mb-4 rounded-md bg-elevated px-3 py-3",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "text-xxs uppercase tracking-wider text-muted",
+				children: "Execution mode"
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-2 flex rounded-sm shadow-[var(--shadow-border)]",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					onClick: () => setLiveIntent(false),
+					className: cn("h-10 flex-1 px-3 text-sm", !liveIntent ? "bg-accent text-accent-fg" : "text-muted"),
+					children: "Paper"
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					onClick: () => setLiveIntent(true),
+					className: cn("h-10 flex-1 px-3 text-sm", liveIntent ? "bg-short text-fg" : "text-muted"),
+					children: "Live"
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-2 text-xs text-pretty text-muted",
+				children: liveIntent ? "Live is the Python bot on your machine only. This preview will not send exchange orders and will not accept API keys." : `Paper fills against the live Binance tape with a lagged ${venueLabel(venue)} book. No orders leave this desk.`
+			})
+		]
+	});
+}
+function VenueToggle({ compact = false }) {
+	const venue = useDesk((s) => s.engine.cfg.lagVenue);
+	const setLagVenue = useDesk((s) => s.setLagVenue);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+		className: cn("flex rounded-sm shadow-[var(--shadow-border)]", compact ? "" : "w-full"),
+		children: ["COINSWITCH", "COINDCX"].map((id) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+			type: "button",
+			onClick: () => setLagVenue(id),
+			className: cn(compact ? "h-8 px-3 text-xxs font-medium uppercase tracking-wider" : "h-11 flex-1 px-3 text-sm", venue === id ? "bg-accent text-accent-fg" : "text-muted"),
+			children: compact ? venueShort(id) : VENUE_PROFILE[id].label
+		}, id))
+	});
+}
+function KeysLockPanel() {
+	const venue = useDesk((s) => s.engine.cfg.lagVenue);
+	const liveIntent = useDesk((s) => s.liveIntent);
+	const keyName = venue === "COINDCX" ? "COINDCX_API_KEY / COINDCX_SECRET_KEY" : "COINSWITCH_API_KEY / COINSWITCH_SECRET_KEY";
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "rounded-md bg-elevated px-3 py-3",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex items-center gap-2",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Lock, { className: "size-4 text-muted" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+					className: "text-xxs uppercase tracking-wider text-muted",
+					children: "Exchange keys"
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "mt-2 text-sm text-pretty",
+				children: [
+					"Keys for ",
+					venueLabel(venue),
+					" are not pasted here. This preview is a public page — anything typed into these boxes would sit in the browser."
+				]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-3 grid gap-2",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "API key" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "font-mono text-xxs",
+						children: "locked"
+					})]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Secret key" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "font-mono text-xxs",
+						children: "locked"
+					})]
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "mt-3 text-xs text-pretty text-muted",
+				children: [
+					"On your PC, put ",
+					keyName,
+					" in the local .env next to main.py. Keep PAPER_TRADING=true until the 72-hour tape is done, then set PAPER_TRADING=false and CONFIRM_LIVE=YES on that box only.",
+					liveIntent ? " The Live switch on this desk is intent — it still cannot fire orders." : ""
+				]
+			})
+		]
+	});
+}
+function CapitalPanel() {
+	const cfg = useDesk((s) => s.engine.cfg);
+	const patch = useDesk((s) => s.patchConfig);
+	const stats = sessionStats(useDesk((s) => s.engine));
+	const halted = useDesk((s) => s.engine.halted);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Panel, {
+		title: "Capital & session risk",
+		kicker: venueLabel(cfg.lagVenue),
+		className: "lg:col-span-5",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "grid gap-4 lg:grid-cols-2",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "grid gap-3",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "mb-2 text-xxs uppercase tracking-wider text-muted",
+						children: "Lag exchange"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(VenueToggle, {}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "mt-2 text-xs text-pretty text-muted",
+						children: "Lead stays Binance. Fees and the live order path switch with this toggle. CoinSwitch taker 0.065%. CoinDCX USDT-M taker 0.05% + GST."
+					})
+				] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "rounded-md bg-elevated px-3 py-3",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex items-center gap-2",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wallet, { className: "size-4 text-muted" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+								className: "text-xxs uppercase tracking-wider text-muted",
+								children: [venueShort(cfg.lagVenue), " wallet"]
+							})]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "mt-2 font-mono text-2xl tabular",
+							children: inr(stats.walletInr, 0)
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "mt-1 text-xs text-pretty text-muted",
+							children: [
+								"Paper wallet = your starting INR plus this session's marked PnL. A live",
+								" ",
+								venueLabel(cfg.lagVenue),
+								" balance is fetched by the Python bot when keys are in .env — never by this browser."
+							]
+						})
+					]
+				})]
+			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "grid gap-3",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+						label: "Paper wallet seed (INR)",
+						value: cfg.startingCapitalInr,
+						onChange: (v) => patch({ startingCapitalInr: v })
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+						label: "% of wallet allocated to trade",
+						value: cfg.allocPct,
+						onChange: (v) => patch({ allocPct: v }),
+						suffix: "%"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "flex flex-wrap gap-2",
+						children: [
+							25,
+							50,
+							75,
+							100
+						].map((n) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => patch({ allocPct: n }),
+							className: cn("h-9 min-w-11 rounded-sm px-3 text-xs", cfg.allocPct === n ? "bg-accent text-accent-fg" : "text-muted shadow-[var(--shadow-border)]"),
+							children: [n, "%"]
+						}, n))
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "text-xs text-pretty text-muted",
+						children: [
+							"Slots size from ",
+							inr(stats.allocatedInr, 0),
+							" (",
+							cfg.allocPct,
+							"% of the seed). The rest of the wallet stays idle."
+						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+						label: "Max session loss (INR) — halt if hit",
+						value: cfg.maxSessionLossInr,
+						onChange: (v) => patch({ maxSessionLossInr: v })
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: cn("text-xs text-pretty", halted ? "text-short" : "text-muted"),
+						children: halted ? "Cap reached. Loop is stopped and open slots were flattened." : cfg.maxSessionLossInr > 0 ? `${inr(stats.lossUsed, 0)} used · ${inr(stats.lossRemaining, 0)} left. At the cap the loop stops immediately.` : "Set a rupee amount. 0 turns the kill switch off."
+					})
+				]
+			})]
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+			className: "mt-4",
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysLockPanel, {})
+		})]
 	});
 }
 function Stat({ label, value, tone }) {
@@ -951,6 +1320,7 @@ function DeskView() {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "grid gap-4 lg:grid-cols-5",
 		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CapitalPanel, {}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Panel, {
 				title: "Open positions",
 				kicker: `${open.length} locked`,
@@ -960,10 +1330,10 @@ function DeskView() {
 					children: open.map((p) => {
 						const pair = engine.pairs[p.symbol];
 						const mark = p.side === "LONG" ? pair?.lag?.bid : pair?.lag?.ask;
-						const u = mark !== void 0 ? p.side === "LONG" ? (mark - p.entryPx) * p.qty * engine.usdtInr : (p.entryPx - mark) * p.qty * engine.usdtInr : 0;
 						const net = mark !== void 0 ? netUsdt(p.side, p.entryPx, mark, p.filledQty, engine.cfg.entryTakerFee, engine.cfg.exitTakerFee) : 0;
 						const remain = Math.max(0, (p.timeoutTs - engine.lastTick) / 1e3);
-						const timeoutLabel = remain > 0 ? `${remain.toFixed(0)}s${p.armedBreakeven ? " · BE" : ""}` : net >= 0 ? "flatten green" : "hold, no timeout loss";
+						const timeoutLabel = remain > 0 ? `${remain.toFixed(0)}s` : net > 0 ? "flatten green" : "hold, no timeout loss";
+						const netInr = net * engine.usdtInr;
 						return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", {
 							className: "grid grid-cols-2 gap-2 rounded-md bg-elevated px-3 py-3 sm:grid-cols-6",
 							children: [
@@ -985,8 +1355,8 @@ function DeskView() {
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cell, {
 									label: "Unreal",
-									value: inr(u),
-									tone: u
+									value: inr(netInr),
+									tone: netInr
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cell, {
 									label: "Timeout",
@@ -1069,9 +1439,9 @@ function DeskView() {
 										className: "pb-2 font-medium",
 										children: "Binance mid"
 									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", {
 										className: "pb-2 font-medium",
-										children: "CS bid / ask"
+										children: [venueShort(engine.cfg.lagVenue), " bid / ask"]
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {
 										className: "pb-2 font-medium",
@@ -1556,7 +1926,7 @@ function ArchitectureView() {
 				children: [
 					"Binance bookTicker WS",
 					"Hurdle + depth gate",
-					"CoinSwitch futures / HFT order",
+					"CoinSwitch or CoinDCX futures order",
 					"Partial fill tracker",
 					"Target / stop / profit-only timeout",
 					"SQLite + Telegram"
@@ -1572,30 +1942,30 @@ function ArchitectureView() {
 				}, step))
 			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 				className: "mt-4 text-sm text-pretty text-muted",
-				children: "CoinSwitch PRO perpetual futures are USDT-margined. INR is the capital and reporting currency. USDT/INR is a live FX tape used to size slots and publish ₹ PnL — not a hardcoded multiplier. If a venue quoted INR, the same FX book would translate the Binance USDT mid before the hurdle."
+				children: "CoinSwitch PRO and CoinDCX perpetual futures are USDT-margined. INR is the capital and reporting currency. Pick the lag venue on the desk. USDT/INR is a live FX tape used to size slots and publish ₹ PnL — not a hardcoded multiplier."
 			})]
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "grid gap-3 md:grid-cols-2",
 			children: [
 				{
 					name: "DataIngestion",
-					body: "Persistent WebSockets only for prices. Binance futures bookTicker is the lead. CoinSwitch PRO Socket.IO order-book snapshots are the lag. REST is banned from the trigger path."
+					body: "Persistent WebSockets only for prices. Binance futures bookTicker is the lead. CoinSwitch PRO or CoinDCX futures order-book is the lag, picked on the desk. REST is banned from the trigger path."
 				},
 				{
 					name: "SignalEngine",
-					body: "Compares Binance mid to CoinSwitch best ask (long) and best bid (short). Fires only when gross divergence clears entry taker + exit fee + slippage buffer. Never uses LTP."
+					body: "Compares Binance mid to the lag venue best ask (long) and best bid (short). Fires only when expected catch-up (lead mid minus the lag spread) is still net-green after that venue's fees. Never uses LTP."
 				},
 				{
 					name: "PortfolioManager",
-					body: "₹10,000 start. Equal weight: available equity / 10. One locked slot per coin until fully closed. Lot-size gate rejects coins whose min contract exceeds slot notional × leverage."
+					body: "Paper wallet seed (default ₹10,000). Only the allocation % is tradable: that slice / 10 slots. One locked slot per coin until fully closed. Lot-size gate rejects coins whose min contract exceeds slot notional × leverage."
 				},
 				{
 					name: "OrderExecutor",
-					body: "Sizes to ≤25% of top-of-book. Tracks partial fills and resizes the exit to filled qty. Token-bucket 15/min. Paper fills against live TOB; live uses Ed25519-signed CoinSwitch futures orders."
+					body: "Sizes to ≤25% of top-of-book. Tracks partial fills and resizes the exit to filled qty. Token-bucket 15/min. Paper fills against live TOB; live uses CoinSwitch Ed25519 or CoinDCX HMAC futures orders."
 				},
 				{
 					name: "RiskManager",
-					body: "Target = Binance mid at entry. Timeout (45s) flattens only if the close is net-green after fees — it will not realize a timeout loss. Once the trade is green, the stop ratchets to scratch so a giveback cannot turn a winner red. Hard vol stop still cuts violent reversals."
+					body: "Target = Binance mid at entry, taken only if the close is net-green after fees. Timeout (45s) is profit-only. The vol stop is the only per-trade loss exit. A session max-loss cap flattens everything and halts the loop."
 				},
 				{
 					name: "TelegramReporter",
@@ -1622,59 +1992,97 @@ function ConfigView() {
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Panel, {
 			title: "Paper desk parameters",
 			kicker: "always paper in this preview",
-			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "grid gap-3",
-				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Starting capital (INR)",
-						value: cfg.startingCapitalInr,
-						onChange: (v) => patch({ startingCapitalInr: v })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Slot count",
-						value: cfg.slotCount,
-						onChange: (v) => patch({ slotCount: v })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Leverage",
-						value: cfg.leverage,
-						onChange: (v) => patch({ leverage: v })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Hold timeout (sec)",
-						value: cfg.holdTimeoutSec,
-						onChange: (v) => patch({ holdTimeoutSec: v })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-xs text-pretty text-muted",
-						children: "Timeout never closes a loser. After 45s it only flattens if net PnL after fees is positive. Green trades ratchet the stop to scratch so a giveback cannot print a timeout loss."
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Lag buffer (ms)",
-						value: cfg.lagMs,
-						onChange: (v) => patch({ lagMs: v })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Slippage buffer (bps)",
-						value: Math.round(cfg.slippageBuffer * 1e4),
-						onChange: (v) => patch({ slippageBuffer: v / 1e4 })
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-						label: "Max top-of-book %",
-						value: Math.round(cfg.maxTobPct * 100),
-						onChange: (v) => patch({ maxTobPct: v / 100 })
-					})
-				]
-			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-				className: "mt-4 text-xs text-pretty text-muted",
-				children: "Live keys never enter this desk. Put them in env vars on the machine that runs the Python bot. PAPER_TRADING stays true until you also set CONFIRM_LIVE=YES."
-			})]
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ModePanel, {}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mb-4",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "mb-2 text-xxs uppercase tracking-wider text-muted",
+						children: "Lag exchange"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(VenueToggle, {})]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "grid gap-3",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Starting capital / paper wallet (INR)",
+							value: cfg.startingCapitalInr,
+							onChange: (v) => patch({ startingCapitalInr: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "% of wallet allocated to trade",
+							value: cfg.allocPct,
+							onChange: (v) => patch({ allocPct: v }),
+							suffix: "%"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Max session loss (INR)",
+							value: cfg.maxSessionLossInr,
+							onChange: (v) => patch({ maxSessionLossInr: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-xs text-pretty text-muted",
+							children: "If marked session loss reaches this amount, every open slot is flattened and the loop stops. 0 disables the kill switch."
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Slot count",
+							value: cfg.slotCount,
+							onChange: (v) => patch({ slotCount: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Leverage",
+							value: cfg.leverage,
+							onChange: (v) => patch({ leverage: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Hold timeout (sec)",
+							value: cfg.holdTimeoutSec,
+							onChange: (v) => patch({ holdTimeoutSec: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-xs text-pretty text-muted",
+							children: "Timeout never closes a loser. After 45s it only flattens if net PnL after fees is positive. Target is also skipped unless the fill would be green. The vol stop is the only path that can still print a loss."
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Lag buffer (ms)",
+							value: cfg.lagMs,
+							onChange: (v) => patch({ lagMs: v })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Slippage buffer (bps)",
+							value: Math.round(cfg.slippageBuffer * 1e4),
+							onChange: (v) => patch({ slippageBuffer: v / 1e4 })
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+							label: "Max top-of-book %",
+							value: Math.round(cfg.maxTobPct * 100),
+							onChange: (v) => patch({ maxTobPct: v / 100 })
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+					className: "mt-4 text-xs text-pretty text-muted",
+					children: "Never paste CoinSwitch, CoinDCX, or Binance secrets into this desk or into chat. Live keys live only in env vars on the box that runs the Python bot. PAPER_TRADING stays true until you also set CONFIRM_LIVE=YES on that box."
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "mt-4",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysLockPanel, {})
+				})
+			]
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Panel, {
 			title: "Local & EC2 runbook",
 			children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("ol", {
 				className: "flex list-decimal flex-col gap-3 pl-4 text-sm text-pretty text-muted",
 				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Download the Python pack from the Python tab (or /lagforge-bot.zip)." }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+						"Skip this preview for the engine. Sign into GitHub as rohitrshrivastava-collab, then clone",
+						" ",
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "font-mono text-xs text-fg",
+							children: REPO_CLONE
+						}),
+						" in VS Code (Git: Clone)."
+					] }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Create a venv, pip install -r requirements.txt, copy env.example to .env." }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Run python latency_bench.py from the same region you will trade." }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py with PAPER_TRADING=true for 72 hours." }),
@@ -1688,25 +2096,60 @@ function SourceView() {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 		className: "grid gap-4",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Panel, {
-			title: "Production Python pack",
-			kicker: "VS Code + EC2",
+			title: "Get the engine from GitHub",
+			kicker: "skip this preview zip",
 			children: [
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "text-sm text-pretty text-muted",
-					children: "Same modules as this desk: WebSocket lead/lag, equal-weight ₹ slots, hurdle gate, partial fills, timeout, vol stop, SQLite recovery, Telegram. Paper by default."
+					children: "Quick Heal flags this preview host (grok-sandbox.com) as a suspicious website. That is the antivirus, not the bot. Do not download from here. Clone from GitHub instead — github.com is a normal, trusted site."
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+					className: "mt-3 font-mono text-xs break-all text-fg",
+					children: REPO_CLONE
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("ol", {
+					className: "mt-4 flex list-decimal flex-col gap-2 pl-4 text-sm text-pretty text-muted",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Install Python 3.11+ (Windows: tick Add python.exe to PATH) and VS Code with the Microsoft Python extension. Install Git if VS Code asks." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Sign into github.com as rohitrshrivastava-collab (the repo is private)." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "In VS Code: Ctrl+Shift+P → Git: Clone → paste the URL above → open the folder." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "No Git? On the GitHub page click Code → Download ZIP, unzip, then File → Open Folder in VS Code." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "In the VS Code terminal: python -m venv .venv, activate it, pip install -r requirements.txt." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Copy env.example to .env. Keep PAPER_TRADING=true. Add Telegram. Leave CoinSwitch keys empty for paper." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py — leave that window open. Ctrl+C stops it." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "EC2 ap-south-1 and CONFIRM_LIVE=YES only after a 72-hour paper tape that still beats fees." })
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mt-4 flex flex-wrap gap-2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CopyCloneButton, {}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
+							href: REPO_PAGE,
+							target: "_blank",
+							rel: "noreferrer",
+							className: "inline-flex h-11 items-center gap-2 rounded-md bg-elevated px-4 text-sm",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ExternalLink, { className: "size-4" }), "Open GitHub"]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", {
+							href: REPO_ZIP,
+							target: "_blank",
+							rel: "noreferrer",
+							className: "inline-flex h-11 items-center rounded-md px-4 text-sm text-muted shadow-[var(--shadow-border)]",
+							children: "GitHub zip (while signed in)"
+						})
+					]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "mt-4 flex flex-wrap gap-2",
-					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", {
-						href: "/lagforge-bot.zip",
-						className: "inline-flex h-11 items-center rounded-md bg-fg px-4 text-sm font-medium text-bg",
-						children: "Download lagforge-bot.zip"
-					})
+					className: "mt-3",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DownloadPackButton, {})
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
 					className: "mt-5 grid gap-2 sm:grid-cols-2",
 					children: PYTHON_FILES.map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
-						href: `/lagforge-bot/${f.path}`,
+						href: `${REPO_PAGE}/blob/main/${f.path}`,
+						target: "_blank",
+						rel: "noreferrer",
 						className: "flex h-11 items-center justify-between rounded-md bg-elevated px-3 text-sm",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: f.label }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 							className: "font-mono text-xxs text-muted",
@@ -1790,17 +2233,23 @@ function LatencyView() {
 		})]
 	});
 }
-function Field({ label, value, onChange }) {
+function Field({ label, value, onChange, suffix }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
 		className: "grid gap-1 text-sm",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 			className: "text-xxs uppercase tracking-wider text-muted",
 			children: label
-		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-			type: "number",
-			value,
-			onChange: (e) => onChange(Number(e.target.value)),
-			className: "h-11 rounded-md bg-inset px-3 font-mono text-sm tabular text-fg shadow-[var(--shadow-border)]"
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+			className: "relative",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				type: "number",
+				value,
+				onChange: (e) => onChange(Number(e.target.value)),
+				className: "h-11 w-full rounded-md bg-inset px-3 font-mono text-sm tabular text-fg shadow-[var(--shadow-border)]"
+			}), suffix ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+				className: "pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted",
+				children: suffix
+			}) : null]
 		})]
 	});
 }

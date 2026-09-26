@@ -14,6 +14,7 @@ import websockets
 
 from config import Config
 from models import Book, Books
+from venues import dcx_pair
 
 log = logging.getLogger("lagforge.ingest")
 
@@ -25,6 +26,8 @@ FX_URL = "https://open.er-api.com/v6/latest/USD"
 CS_WS = "wss://ws.coinswitch.co"
 CS_PATH = "/pro/realtime-rates-socket/futures/exchange_2"
 CS_NS = "/exchange_2"
+
+DCX_WS = "wss://stream.coindcx.com"
 
 
 def _book(symbol: str, bid: float, ask: float, bq: float, aq: float, ts: int) -> Book | None:
@@ -47,7 +50,10 @@ class DataIngestion:
     async def run(self) -> None:
         tasks = [
             asyncio.create_task(self._binance_loop(), name="binance-ws"),
-            asyncio.create_task(self._coinswitch_loop(), name="cs-ws"),
+            asyncio.create_task(
+                self._coindcx_loop() if self.cfg.lag_venue == "COINDCX" else self._coinswitch_loop(),
+                name="lag-ws",
+            ),
             asyncio.create_task(self._fx_loop(), name="fx"),
             asyncio.create_task(self._vol_loop(), name="vol"),
         ]
@@ -200,7 +206,7 @@ class DataIngestion:
 
     async def _synthetic_lag(self) -> None:
         """Paper-only fallback: replay Binance books after SYNTHETIC_LAG_MS."""
-        log.warning("synthetic lag enabled — not a real CoinSwitch book")
+        log.warning("synthetic lag enabled — not a real lag-venue book")
         while not self._stop.is_set():
             now = int(time.time() * 1000)
             snapshot = {s: b for s, b in self.books.lead.items()}
@@ -214,3 +220,62 @@ class DataIngestion:
                 for symbol, book in released.items():
                     self.books.lag[symbol] = book
             await asyncio.sleep(0.05)
+
+    async def _coindcx_loop(self) -> None:
+        backoff = 1.0
+        channels = [f"{dcx_pair(s)}@orderbook@50-futures" for s in self.cfg.candidates]
+        while not self._stop.is_set():
+            try:
+                log.info("coindcx connecting %s", DCX_WS)
+                async with websockets.connect(
+                    DCX_WS, ping_interval=15, ping_timeout=10, close_timeout=5
+                ) as ws:
+                    for ch in channels:
+                        await ws.send(json.dumps({"channelName": ch}))
+                    log.info("coindcx socket up (%s pairs)", len(channels))
+                    backoff = 1.0
+                    while not self._stop.is_set():
+                        raw = await asyncio.wait_for(ws.recv(), timeout=20)
+                        self._on_dcx_msg(raw)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("coindcx ws: %s", exc)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+    def _on_dcx_msg(self, raw: str | bytes) -> None:
+        try:
+            msg = json.loads(raw)
+        except Exception:
+            return
+        body = msg.get("data", msg) if isinstance(msg, dict) else {}
+        if not isinstance(body, dict):
+            return
+        channel = str(body.get("channel") or body.get("channelName") or msg.get("channel") or "")
+        pair = str(body.get("pair") or body.get("instrument") or "")
+        if not pair and "@" in channel:
+            pair = channel.split("@", 1)[0]
+        if not pair:
+            return
+        symbol = pair.upper().removeprefix("B-").replace("_", "")
+        if not symbol.endswith("USDT"):
+            symbol = symbol + "USDT"
+        bids = body.get("bids") or body.get("b") or []
+        asks = body.get("asks") or body.get("a") or []
+        if not bids or not asks:
+            return
+        def _lvl(row: object) -> tuple[float, float]:
+            if isinstance(row, dict):
+                return float(row.get("price") or row.get("p") or 0), float(row.get("quantity") or row.get("q") or 0)
+            return float(row[0]), float(row[1])  # type: ignore[index]
+        try:
+            bid, bq = _lvl(bids[0])
+            ask, aq = _lvl(asks[0])
+        except Exception:
+            return
+        ts = int(body.get("ts") or body.get("timestamp") or time.time() * 1000)
+        book = _book(symbol, bid, ask, bq, aq, ts)
+        if book:
+            self.books.lag[book.symbol] = book
+

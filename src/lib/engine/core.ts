@@ -1,4 +1,4 @@
-import { hurdlePct, minQty, roundQty } from "./config";
+import { hurdlePct, minQty, roundQty, tradingEquity } from "./config";
 import type {
   AlertMsg,
   Book,
@@ -13,6 +13,8 @@ import type {
 export type EngineState = {
   cfg: EngineConfig;
   status: "idle" | "running" | "paused";
+  halted: boolean;
+  haltReason: string | null;
   sessionStart: number | null;
   lastTick: number;
   usdtInr: number;
@@ -85,12 +87,14 @@ export function createEngineState(cfg: EngineConfig, now = Date.now()): EngineSt
   return {
     cfg,
     status: "idle",
+    halted: false,
+    haltReason: null,
     sessionStart: null,
     lastTick: now,
     usdtInr: 96,
     fxSource: "seed",
     venue: "binance",
-    equityInr: cfg.startingCapitalInr,
+    equityInr: tradingEquity(cfg, 0),
     realizedNetInr: 0,
     realizedGrossUsdt: 0,
     realizedFeesUsdt: 0,
@@ -188,18 +192,14 @@ function closePosition(
   exitPx: number,
   reason: Trade["reason"],
   ts: number,
-) {
+): boolean {
   const qty = pos.filledQty;
   const gross =
     pos.side === "LONG" ? (exitPx - pos.entryPx) * qty : (pos.entryPx - exitPx) * qty;
-  const fees =
-    (pos.entryPx * qty + exitPx * qty) *
-    (state.cfg.entryTakerFee + state.cfg.exitTakerFee) *
-    0.5 *
-    2;
   const feeAmt =
     pos.entryPx * qty * state.cfg.entryTakerFee + exitPx * qty * state.cfg.exitTakerFee;
   const net = gross - feeAmt;
+  if (reason !== "STOP" && reason !== "KILL" && net < 0) return false;
   const netInr = net * state.usdtInr;
   const trade: Trade = {
     id: uid("tr"),
@@ -219,14 +219,13 @@ function closePosition(
     latencyMs: pos.latencyMs,
     paper: true,
   };
-  void fees;
   state.trades = [trade, ...state.trades].slice(0, 500);
   state.hourBucket.trades.push(trade);
   state.positions = state.positions.filter((p) => p.id !== pos.id);
   state.realizedNetInr += netInr;
   state.realizedGrossUsdt += gross;
   state.realizedFeesUsdt += feeAmt;
-  state.equityInr = state.cfg.startingCapitalInr + state.realizedNetInr;
+  state.equityInr = tradingEquity(state.cfg, state.realizedNetInr);
   const sign = net >= 0 ? "+" : "";
   pushAlert(
     state,
@@ -235,6 +234,56 @@ function closePosition(
     `Fill ${fmtPx(exitPx)} · qty ${qty} · net ${sign}₹${netInr.toFixed(2)} (${sign}${net.toFixed(4)} USDT) · hold ${trade.holdSec.toFixed(1)}s · PAPER`,
     ts,
   );
+  return true;
+}
+
+function markUnrealizedInr(state: EngineState): number {
+  return state.positions.reduce((s, p) => {
+    const C = state.lag[p.symbol];
+    if (!C) return s;
+    const mark = p.side === "LONG" ? C.bid : C.ask;
+    return (
+      s +
+      netUsdt(
+        p.side,
+        p.entryPx,
+        mark,
+        p.filledQty,
+        state.cfg.entryTakerFee,
+        state.cfg.exitTakerFee,
+      ) *
+        state.usdtInr
+    );
+  }, 0);
+}
+
+function flattenKill(state: EngineState, ts: number) {
+  for (const pos of [...state.positions]) {
+    const C = state.lag[pos.symbol];
+    const exitPx = C ? (pos.side === "LONG" ? C.bid : C.ask) : pos.entryPx;
+    closePosition(state, pos, exitPx, "KILL", ts);
+  }
+  state.halted = true;
+  state.haltReason = "MAX_LOSS";
+  state.status = "paused";
+  pushAlert(
+    state,
+    "WARN",
+    "Session max loss hit — loop stopped",
+    `Realized ${state.realizedNetInr >= 0 ? "+" : ""}₹${state.realizedNetInr.toFixed(2)} · cap ₹${state.cfg.maxSessionLossInr.toFixed(0)} · ${state.cfg.lagVenue}. Open slots flattened. Raise the cap or reset the session to arm again.`,
+    ts,
+  );
+}
+
+function maybeSessionKill(state: EngineState, ts: number): boolean {
+  const cap = state.cfg.maxSessionLossInr;
+  if (!(cap > 0) || state.halted) return state.halted;
+  const pnl = state.realizedNetInr + markUnrealizedInr(state);
+  if (-pnl + 1e-9 >= cap) {
+    flattenKill(state, ts);
+    return true;
+  }
+  return false;
 }
 
 function fmtPx(px: number): string {
@@ -304,12 +353,14 @@ export function ingestSnapshot(
   state.fxSource = fxSource;
   state.venue = venue;
   state.ticks += 1;
+  state.equityInr = tradingEquity(state.cfg, state.realizedNetInr);
 
   const lead: Record<string, Book> = { ...state.lead };
   for (const t of tickers) lead[t.symbol] = t;
   state.lead = lead;
 
-  const nextUniverse = screenUniverse(tickers, state.cfg, usdtInr, state.equityInr);
+  const bankroll = state.equityInr;
+  const nextUniverse = screenUniverse(tickers, state.cfg, usdtInr, bankroll);
   if (nextUniverse.length) state.universe = nextUniverse;
 
   state.delayBuf.push({ t: now, books: Object.fromEntries(tickers.map((t) => [t.symbol, t])) });
@@ -367,7 +418,7 @@ export function ingestSnapshot(
     const leadMid = mid(L);
     const longDiv = (leadMid - C.ask) / C.ask;
     const shortDiv = (C.bid - leadMid) / C.bid;
-    const slotUsdt = state.equityInr / state.cfg.slotCount / usdtInr;
+    const slotUsdt = bankroll / state.cfg.slotCount / usdtInr;
     const minNotional = lot * C.ask;
     let skip: string | null = null;
     if (minNotional > slotUsdt * state.cfg.leverage) skip = "min lot > slot";
@@ -406,37 +457,37 @@ export function ingestSnapshot(
       state.cfg.entryTakerFee,
       state.cfg.exitTakerFee,
     );
-    const scratch = scratchPx(pos.side, pos.entryPx, state.cfg.entryTakerFee, state.cfg.exitTakerFee);
 
-    if (net >= 0) {
-      const tightened =
-        pos.side === "LONG" ? Math.max(pos.stopPx, scratch) : Math.min(pos.stopPx, scratch);
-      if (!pos.armedBreakeven || tightened !== pos.stopPx) {
-        const next = { ...pos, armedBreakeven: true, stopPx: tightened };
-        state.positions = state.positions.map((p) => (p.id === pos.id ? next : p));
-        Object.assign(pos, next);
-      }
+    if (net > 0 && !pos.armedBreakeven) {
+      const next = { ...pos, armedBreakeven: true };
+      state.positions = state.positions.map((p) => (p.id === pos.id ? next : p));
+      Object.assign(pos, next);
     }
 
-    if (pos.side === "LONG" && C.bid >= pos.targetPx) {
+    if (pos.side === "LONG" && C.bid >= pos.targetPx && net > 0) {
       closePosition(state, pos, C.bid, "TARGET", now);
       continue;
     }
-    if (pos.side === "SHORT" && C.ask <= pos.targetPx) {
+    if (pos.side === "SHORT" && C.ask <= pos.targetPx && net > 0) {
       closePosition(state, pos, C.ask, "TARGET", now);
       continue;
     }
     if (pos.side === "LONG" && C.bid <= pos.stopPx) {
-      closePosition(state, pos, C.bid, pos.armedBreakeven ? "SCRATCH" : "STOP", now);
+      closePosition(state, pos, C.bid, "STOP", now);
       continue;
     }
     if (pos.side === "SHORT" && C.ask >= pos.stopPx) {
-      closePosition(state, pos, C.ask, pos.armedBreakeven ? "SCRATCH" : "STOP", now);
+      closePosition(state, pos, C.ask, "STOP", now);
       continue;
     }
-    if (now >= pos.timeoutTs && net >= 0) {
+    if (now >= pos.timeoutTs && net > 0) {
       closePosition(state, pos, mark, "TIMEOUT", now);
     }
+  }
+
+  if (maybeSessionKill(state, now)) {
+    maybeFlushHour(state, now);
+    return state;
   }
 
   if (state.positions.length < state.cfg.slotCount) {
@@ -463,7 +514,7 @@ export function ingestSnapshot(
       }
       if (!side || px <= 0) continue;
 
-      const sized = sizeOrder(state.cfg, symbol, px, tobQty, state.equityInr, usdtInr);
+      const sized = sizeOrder(state.cfg, symbol, px, tobQty, bankroll, usdtInr);
       if (sized.qty <= 0) continue;
 
       const fillFrac = 0.86 + Math.random() * 0.14;
@@ -472,8 +523,23 @@ export function ingestSnapshot(
 
       const slip = Math.min(state.cfg.maxSlippagePct, 0.00015 + Math.random() * 0.0002);
       const fillPx = side === "LONG" ? px * (1 + slip) : px * (1 - slip);
+      const halfSpread = Math.max(0, (C.ask - C.bid) / 2);
+      const expectedExit = side === "LONG" ? pair.leadMid - halfSpread : pair.leadMid + halfSpread;
+      if (
+        netUsdt(
+          side,
+          fillPx,
+          expectedExit,
+          filledQty,
+          state.cfg.entryTakerFee,
+          state.cfg.exitTakerFee,
+        ) <= 0
+      ) {
+        continue;
+      }
       const vol = state.vol[symbol] ?? 0.0004;
-      const stopPct = Math.max(state.cfg.minStopPct, state.cfg.volStopMult * vol);
+      const spreadFrac = fillPx > 0 ? (C.ask - C.bid) / fillPx : 0;
+      const stopPct = Math.max(state.cfg.minStopPct, state.cfg.volStopMult * vol, spreadFrac * 3);
       const target = pair.leadMid;
       const stopPx = side === "LONG" ? fillPx * (1 - stopPct) : fillPx * (1 + stopPct);
       const latencyMs = 7 + Math.random() * 18;
@@ -520,13 +586,11 @@ export function sessionStats(state: EngineState) {
   const losses = trades.filter((t) => t.netUsdt <= 0).length;
   const n = trades.length;
   const lockedMargin = state.positions.reduce((s, p) => s + p.notionalInr / p.leverage, 0);
-  const unrealized = state.positions.reduce((s, p) => {
-    const C = state.lag[p.symbol];
-    if (!C) return s;
-    const mark = p.side === "LONG" ? C.bid : C.ask;
-    const g = p.side === "LONG" ? (mark - p.entryPx) * p.qty : (p.entryPx - mark) * p.qty;
-    return s + g * state.usdtInr;
-  }, 0);
+  const unrealized = markUnrealizedInr(state);
+  const sessionPnl = state.realizedNetInr + unrealized;
+  const lossUsed = Math.max(0, -sessionPnl);
+  const walletInr = state.cfg.startingCapitalInr + state.realizedNetInr + unrealized;
+  const allocatedInr = tradingEquity(state.cfg, 0);
   return {
     trades: n,
     wins,
@@ -538,6 +602,11 @@ export function sessionStats(state: EngineState) {
     lockedMargin,
     unrealized,
     markEquity: state.equityInr + unrealized,
+    walletInr,
+    allocatedInr,
+    sessionPnl,
+    lossUsed,
+    lossRemaining: Math.max(0, state.cfg.maxSessionLossInr - lossUsed),
     hours: state.sessionStart ? (state.lastTick - state.sessionStart) / 3_600_000 : 0,
   };
 }

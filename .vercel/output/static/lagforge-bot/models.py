@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 Side = Literal["LONG", "SHORT"]
-ExitReason = Literal["TARGET", "TIMEOUT", "STOP", "SCRATCH", "MANUAL"]
+ExitReason = Literal["TARGET", "TIMEOUT", "STOP", "SCRATCH", "MANUAL", "KILL"]
 
 
 @dataclass(slots=True)

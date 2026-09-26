@@ -1,17 +1,20 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { DEFAULT_CONFIG } from "./config";
+import { applyVenue, clampAlloc, DEFAULT_CONFIG, tradingEquity } from "./config";
 import { createEngineState, ingestSnapshot, sessionStats, type EngineState } from "./core";
-import type { AppView, EngineConfig, LatencySample, MarketSnapshot } from "./types";
+import type { AppView, EngineConfig, LagVenue, LatencySample, MarketSnapshot } from "./types";
 
 type DeskState = {
   view: AppView;
   hydrated: boolean;
+  liveIntent: boolean;
   engine: EngineState;
   feed: { lastOk: boolean; lastError: string | null; lastMs: number; polls: number };
   latency: LatencySample[];
   setView: (view: AppView) => void;
   setHydrated: () => void;
+  setLiveIntent: (live: boolean) => void;
+  setLagVenue: (venue: LagVenue) => void;
   patchConfig: (partial: Partial<EngineConfig>) => void;
   start: () => void;
   stop: () => void;
@@ -21,30 +24,61 @@ type DeskState = {
   pushLatency: (sample: LatencySample) => void;
 };
 
+function nextConfig(cfg: EngineConfig, partial: Partial<EngineConfig>): EngineConfig {
+  let next: EngineConfig = { ...cfg, ...partial, paperTrading: true };
+  if (partial.lagVenue && partial.lagVenue !== cfg.lagVenue) {
+    next = applyVenue(next, partial.lagVenue);
+  }
+  if (partial.allocPct != null) next.allocPct = clampAlloc(partial.allocPct);
+  if (partial.maxSessionLossInr != null) {
+    next.maxSessionLossInr = Math.max(0, partial.maxSessionLossInr);
+  }
+  if (partial.startingCapitalInr != null) {
+    next.startingCapitalInr = Math.max(0, partial.startingCapitalInr);
+  }
+  return next;
+}
+
 export const useDesk = create<DeskState>()(
   persist(
     (set, get) => ({
       view: "desk",
       hydrated: false,
+      liveIntent: false,
       engine: createEngineState(DEFAULT_CONFIG),
       feed: { lastOk: false, lastError: null, lastMs: 0, polls: 0 },
       latency: [],
       setView: (view) => set({ view }),
       setHydrated: () => set({ hydrated: true }),
+      setLiveIntent: (live) => set({ liveIntent: live }),
+      setLagVenue: (venue) => get().patchConfig({ lagVenue: venue }),
       patchConfig: (partial) =>
-        set((s) => ({
-          engine: {
-            ...s.engine,
-            cfg: { ...s.engine.cfg, ...partial, paperTrading: true },
-          },
-        })),
+        set((s) => {
+          const cfg = nextConfig(s.engine.cfg, partial);
+          return {
+            engine: {
+              ...s.engine,
+              cfg,
+              equityInr: tradingEquity(cfg, s.engine.realizedNetInr),
+            },
+          };
+        }),
       start: () =>
         set((s) => {
+          if (s.engine.halted) {
+            const stats = sessionStats(s.engine);
+            const cap = s.engine.cfg.maxSessionLossInr;
+            if (cap > 0 && stats.lossUsed >= cap) {
+              return s;
+            }
+          }
           const now = Date.now();
           return {
             engine: {
               ...s.engine,
               status: "running",
+              halted: false,
+              haltReason: null,
               sessionStart: s.engine.sessionStart ?? now,
               hourBucket:
                 s.engine.hourBucket.start === 0
@@ -107,7 +141,7 @@ export const useDesk = create<DeskState>()(
         set((s) => ({ latency: [sample, ...s.latency].slice(0, 40) })),
     }),
     {
-      name: "lagforge-desk-v2",
+      name: "lagforge-desk-v4",
       partialize: (s) => ({
         engine: {
           ...s.engine,
@@ -115,6 +149,7 @@ export const useDesk = create<DeskState>()(
           delayBuf: [],
         },
         view: s.view,
+        liveIntent: false,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHydrated();

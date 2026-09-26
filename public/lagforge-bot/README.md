@@ -1,95 +1,131 @@
 # LAGFORGE
 
-Lead-lag latency bot: **Binance Futures (lead)** → **CoinSwitch PRO Crypto Futures (lag)**.
+Lead-lag engine: **Binance Futures (lead)** → **CoinSwitch PRO or CoinDCX Crypto Futures (lag)**.
 
-Paper trading is the default. Do not enable live orders until you have 72 hours of tape showing that gross divergence still beats fees after slippage.
+This repo is the trading engine. It is **not** the visual desk in the Grok preview. The desk stays paper. Live orders run from this folder in VS Code (or later on a Mumbai EC2 box). Status while it runs: terminal + Telegram.
 
-This is trading software, not advice. ₹10,000 at 10× is enough to destroy the account. Run paper first.
+Do **not** paste API keys into the web desk or into chat. They go only in a local `.env`.
 
-## What it does
+Paper is the default. Do not enable live until you have 72 hours of tape showing that gross divergence still beats fees after slippage. ₹10,000 at 10× can wipe the account.
 
-- Watches Binance bookTicker over WebSocket (never REST polling for signals).
-- Watches CoinSwitch PRO futures order book over Socket.IO.
-- Converts slot size with a live USDT/INR rate (equity is INR; contracts are USDT-margined).
-- Splits equity equally across 10 coin slots. One open position per coin.
-- Enters LONG if Binance mid > CoinSwitch best ask by more than entry fee + exit fee + slippage buffer.
-- Enters SHORT if Binance mid < CoinSwitch best bid by the same hurdle.
-- Caps size to a fraction of top-of-book. Resizes exits to the filled quantity.
-- Exits on target (lag catches the Binance mid recorded at entry), a volatility stop, or timeout. Timeout (default 45s) **never closes a losing trade** — it only flattens if net PnL after fees is green. Once a trade is green, the stop ratchets to scratch so a giveback cannot turn a winner into a timeout loss.
-- Recovers open slots from SQLite after a crash.
-- Telegram on every fill and every hour.
+---
 
-## Local (VS Code / Windows / macOS / Linux)
+## Get the code (skip the Grok zip)
 
-Python 3.11+.
+The Grok preview host (`*.grok-sandbox.com`) is often blocked by antivirus (Quick Heal Browsing Protection). That popup is about the preview website, not this repo. **Do not download from the preview.** Use GitHub.
+
+1. Install [Python 3.11+](https://www.python.org/downloads/) (Windows: tick **Add python.exe to PATH**) and [VS Code](https://code.visualstudio.com/) with the Microsoft **Python** extension.
+2. Sign into [github.com](https://github.com) as **rohitrshrivastava-collab** (this repo is private).
+3. In VS Code: **Ctrl+Shift+P** (Mac: **Cmd+Shift+P**) → **Git: Clone**.
+4. Paste:
+
+```
+https://github.com/rohitrshrivastava-collab/lagforge-bot.git
+```
+
+5. Pick a folder (for example Documents). Open the cloned folder when VS Code asks. If VS Code asks to install Git, let it.
+
+### No Git? Download the zip from GitHub
+
+On [the repo page](https://github.com/rohitrshrivastava-collab/lagforge-bot) (while signed in): **Code → Download ZIP**. Unzip, then in VS Code: **File → Open Folder**.
+
+Or in a terminal (Git installed):
+
+```bash
+git clone https://github.com/rohitrshrivastava-collab/lagforge-bot.git
+cd lagforge-bot
+```
+
+Optional: if you still want the visual paper desk in Grok, whitelist `*.grok-sandbox.com` in Quick Heal → Internet Security → Browsing Protection. You do **not** need that site to run this engine.
+
+---
+
+## Run paper
+
+In the VS Code terminal (inside the cloned folder):
 
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
+```
+
+Activate it:
+
+- **Windows:** `.venv\Scripts\activate`
+- **Mac / Linux:** `source .venv/bin/activate`
+
+Then:
+
+```bash
 pip install -r requirements.txt
 cp env.example .env
 ```
 
-Edit `.env`:
+Windows PowerShell:
 
-- Leave `PAPER_TRADING=true`.
-- Add Telegram token + chat id for alerts.
-- CoinSwitch keys are optional in paper mode (needed only for live orders).
-- If CoinSwitch WS is blocked on your network, set `ALLOW_SYNTHETIC_LAG=true` so paper still runs against a delayed Binance book. Turn that off for the real 72-hour calibration.
+```powershell
+copy env.example .env
+```
+
+Open `.env`. Keep `PAPER_TRADING=true`. Set `LAG_VENUE=COINSWITCH` or `LAG_VENUE=COINDCX`. Add Telegram token and chat id. Leave exchange keys empty for paper. Optionally set `ALLOC_PCT` (1–100) and `MAX_SESSION_LOSS_INR` (halt if session loss hits this rupee amount; 0 = off). Save. Never commit `.env`.
+
+If CoinSwitch WS fails on your home network, set `ALLOW_SYNTHETIC_LAG=true` for a local delayed-Binance book. Turn that **off** before the real 72-hour calibration.
 
 ```bash
 python latency_bench.py
 python main.py
 ```
 
-You want CoinSwitch RTT in the low tens of milliseconds from Mumbai. If Binance futures WS is geo-blocked, the bot falls back to Binance’s public spot stream.
+Leave that window open. `Ctrl+C` stops it.
 
-## AWS EC2 (ap-south-1 Mumbai)
+---
 
-1. Ubuntu 22.04 LTS, t3.small or better, same region as CoinSwitch.
-2. Open outbound 443. No inbound except your SSH.
-3. Install Python 3.11, clone/copy this folder, create venv, copy `.env`.
-4. `python latency_bench.py` — confirm CoinSwitch and Binance pings.
-5. Run paper under systemd:
+## AWS EC2 (ap-south-1) — after paper works on your PC
+
+Ubuntu 22.04, t3.small or better. SSH inbound from your IP only. Outbound HTTPS open.
+
+Clone this repo on the box, recreate the venv, copy `.env` **on the server** (do not email it). Run `python latency_bench.py` — you want CoinSwitch RTT in the low tens of milliseconds from Mumbai.
 
 ```bash
 sudo cp deploy/lagforge.service /etc/systemd/system/lagforge.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now lagforge
-journalctl -u lagforge -f
 ```
 
-Edit the unit’s `WorkingDirectory` and `EnvironmentFile` to match the account path.
+Edit `WorkingDirectory` and `EnvironmentFile` to your path, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now lagforge
+sudo journalctl -u lagforge -f
+```
+
+Keep `PAPER_TRADING=true` until the 72-hour tape is done.
 
 ## Going live (after 72h paper)
 
-Only if net edge survived fees across Asia / London / US hours:
+Only if net edge survived fees across Asia, London, and US hours. In `.env` **on the server**, fill the keys for the venue you picked:
 
 ```
+LAG_VENUE=COINSWITCH
+COINSWITCH_API_KEY=...
+COINSWITCH_SECRET_KEY=...
 PAPER_TRADING=false
 CONFIRM_LIVE=YES
 ```
 
-Both are required. Keys stay in `.env` on the box — never in git, never in a web form.
+or:
 
-Live orders hit `POST /trade/api/v2/futures/order` with Ed25519 headers. CoinSwitch futures are USDT-margined; INR is how we size and report.
+```
+LAG_VENUE=COINDCX
+COINDCX_API_KEY=...
+COINDCX_SECRET_KEY=...
+PAPER_TRADING=false
+CONFIRM_LIVE=YES
+```
 
-## Notes on ₹10,000 / 10 slots
+`CONFIRM_LIVE=YES` and keys for that venue are both required. Restart the service. Keys stay on that box.
 
-At ~₹96/USDT a ₹1,000 slot with 10× is ~$104 notional. BTC’s 0.001 lot can fit if the book is liquid enough; the screener still drops any coin whose min contract exceeds slot notional and fills the 10 slots from the most liquid names that fit.
+## Strategy notes
 
-## Files
-
-| File | Module |
-| --- | --- |
-| `data_ingestion.py` | DataIngestion |
-| `signal_engine.py` | SignalEngine |
-| `portfolio.py` | PortfolioManager |
-| `order_executor.py` | OrderExecutor |
-| `risk_manager.py` | RiskManager |
-| `telegram_reporter.py` | TelegramReporter |
-| `persistence.py` | SQLite crash recovery |
-| `latency_bench.py` | RTT probe |
-| `rate_limit.py` | Token bucket |
+- Target and timeout flatten **only if the close is net-green after fees**.
+- The vol stop is the only per-trade loss exit (at least 3× the book spread).
+- `MAX_SESSION_LOSS_INR` flattens every open slot and stops new entries when marked session loss hits the cap.
+- Slots are equal-weight from `(wallet × ALLOC_PCT%) / SLOT_COUNT`. One open position per coin.

@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+from venues import normalize_venue
+from venues import profile as venue_profile
+
 load_dotenv()
 
 
@@ -75,12 +78,18 @@ MIN_QTY = {
 class Config:
     paper_trading: bool = True
     confirm_live: str = ""
+    lag_venue: str = "COINSWITCH"
     coinswitch_api_key: str = ""
     coinswitch_secret_key: str = ""
     coinswitch_base_url: str = "https://coinswitch.co"
+    coindcx_api_key: str = ""
+    coindcx_secret_key: str = ""
+    coindcx_base_url: str = "https://api.coindcx.com"
     telegram_token: str = ""
     telegram_chat_id: str = ""
     starting_capital_inr: float = 10000.0
+    alloc_pct: float = 100.0
+    max_session_loss_inr: float = 1000.0
     slot_count: int = 10
     leverage: int = 10
     entry_taker_fee: float = 0.00065
@@ -103,29 +112,49 @@ class Config:
         return self.entry_taker_fee + self.exit_taker_fee + self.slippage_buffer
 
     @property
+    def venue_keys_ok(self) -> bool:
+        if self.lag_venue == "COINDCX":
+            return bool(self.coindcx_api_key and self.coindcx_secret_key)
+        return bool(self.coinswitch_api_key and self.coinswitch_secret_key)
+
+    @property
     def live_enabled(self) -> bool:
         return (
             not self.paper_trading
             and self.confirm_live.strip().upper() == "YES"
-            and bool(self.coinswitch_api_key and self.coinswitch_secret_key)
+            and self.venue_keys_ok
         )
+
+    def allocated_seed(self) -> float:
+        pct = min(100.0, max(1.0, self.alloc_pct))
+        return self.starting_capital_inr * (pct / 100.0)
 
 
 def load_config() -> Config:
     paper = _bool("PAPER_TRADING", True)
+    venue = normalize_venue(os.getenv("LAG_VENUE", "COINSWITCH"))
+    vp = venue_profile(venue)
+    entry = _float("ENTRY_TAKER_FEE", vp.entry_taker_fee)
+    exit_fee = _float("EXIT_TAKER_FEE", vp.exit_taker_fee)
     cfg = Config(
         paper_trading=paper,
         confirm_live=os.getenv("CONFIRM_LIVE", ""),
+        lag_venue=venue,
         coinswitch_api_key=os.getenv("COINSWITCH_API_KEY", ""),
         coinswitch_secret_key=os.getenv("COINSWITCH_SECRET_KEY", ""),
         coinswitch_base_url=os.getenv("COINSWITCH_BASE_URL", "https://coinswitch.co").rstrip("/"),
+        coindcx_api_key=os.getenv("COINDCX_API_KEY", ""),
+        coindcx_secret_key=os.getenv("COINDCX_SECRET_KEY", ""),
+        coindcx_base_url=os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com").rstrip("/"),
         telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
         starting_capital_inr=_float("STARTING_CAPITAL_INR", 10000),
+        alloc_pct=_float("ALLOC_PCT", 100),
+        max_session_loss_inr=_float("MAX_SESSION_LOSS_INR", 1000),
         slot_count=_int("SLOT_COUNT", 10),
         leverage=_int("LEVERAGE", 10),
-        entry_taker_fee=_float("ENTRY_TAKER_FEE", 0.00065),
-        exit_taker_fee=_float("EXIT_TAKER_FEE", 0.00065),
+        entry_taker_fee=entry,
+        exit_taker_fee=exit_fee,
         slippage_buffer=_float("SLIPPAGE_BUFFER", 0.0005),
         max_tob_pct=_float("MAX_TOB_PCT", 0.25),
         max_slippage_pct=_float("MAX_SLIPPAGE_PCT", 0.001),

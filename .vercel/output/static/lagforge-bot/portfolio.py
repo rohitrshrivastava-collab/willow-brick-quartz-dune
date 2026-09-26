@@ -23,7 +23,7 @@ def min_qty(symbol: str, overrides: dict[str, float] | None = None) -> float:
 class PortfolioManager:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self.equity_inr = cfg.starting_capital_inr
+        self.equity_inr = cfg.allocated_seed()
         self.realized_net_inr = 0.0
         self.realized_gross_usdt = 0.0
         self.realized_fees_usdt = 0.0
@@ -74,7 +74,7 @@ class PortfolioManager:
         self.realized_gross_usdt += gross_usdt
         self.realized_fees_usdt += fees_usdt
         self.realized_net_inr += net * usdt_inr
-        self.equity_inr = self.cfg.starting_capital_inr + self.realized_net_inr
+        self.equity_inr = self.cfg.allocated_seed() + self.realized_net_inr
         self._usdt_inr_hint = usdt_inr
 
     def screen(self, quote_vol: dict[str, float], books: dict[str, Book], usdt_inr: float) -> list[str]:

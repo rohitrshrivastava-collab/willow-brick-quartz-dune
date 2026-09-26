@@ -1,4 +1,4 @@
-import type { EngineConfig } from "./types";
+import type { EngineConfig, LagVenue } from "./types";
 
 /** Conservative CoinSwitch-style lot sizes for the paper desk. */
 export const MIN_QTY: Record<string, number> = {
@@ -47,25 +47,83 @@ export const CANDIDATE_SYMBOLS = [
   "FILUSDT",
 ] as const;
 
+/** Taker fees as used for hurdle + PnL. CoinDCX 0.05% USDT-M + 18% GST. */
+export const VENUE_PROFILE: Record<
+  LagVenue,
+  { label: string; short: string; entryTakerFee: number; exitTakerFee: number; extraLagSpreadBps: number }
+> = {
+  COINSWITCH: {
+    label: "CoinSwitch PRO",
+    short: "CS",
+    entryTakerFee: 0.00065,
+    exitTakerFee: 0.00065,
+    extraLagSpreadBps: 4,
+  },
+  COINDCX: {
+    label: "CoinDCX",
+    short: "DCX",
+    entryTakerFee: 0.00059,
+    exitTakerFee: 0.00059,
+    extraLagSpreadBps: 5,
+  },
+};
+
 export const DEFAULT_CONFIG: EngineConfig = {
   paperTrading: true,
+  lagVenue: "COINSWITCH",
   startingCapitalInr: 10000,
+  allocPct: 100,
+  maxSessionLossInr: 1000,
   slotCount: 10,
   leverage: 10,
-  entryTakerFee: 0.00065,
-  exitTakerFee: 0.00065,
+  entryTakerFee: VENUE_PROFILE.COINSWITCH.entryTakerFee,
+  exitTakerFee: VENUE_PROFILE.COINSWITCH.exitTakerFee,
   slippageBuffer: 0.0005,
   maxTobPct: 0.25,
   holdTimeoutSec: 45,
   minStopPct: 0.0015,
   volStopMult: 2.2,
   lagMs: 220,
-  extraLagSpreadBps: 4,
+  extraLagSpreadBps: VENUE_PROFILE.COINSWITCH.extraLagSpreadBps,
   maxSlippagePct: 0.001,
   pollMs: 400,
   calibrationHours: 72,
   candidateSymbols: [...CANDIDATE_SYMBOLS],
 };
+
+export function clampAlloc(n: number): number {
+  if (!Number.isFinite(n)) return 100;
+  return Math.min(100, Math.max(1, Math.round(n)));
+}
+
+export function venueLabel(venue: LagVenue): string {
+  return VENUE_PROFILE[venue]?.label ?? venue;
+}
+
+export function venueShort(venue: LagVenue): string {
+  return VENUE_PROFILE[venue]?.short ?? venue;
+}
+
+export function applyVenue(cfg: EngineConfig, venue: LagVenue): EngineConfig {
+  const p = VENUE_PROFILE[venue];
+  return {
+    ...cfg,
+    lagVenue: venue,
+    entryTakerFee: p.entryTakerFee,
+    exitTakerFee: p.exitTakerFee,
+    extraLagSpreadBps: p.extraLagSpreadBps,
+  };
+}
+
+/** INR earmarked for slots at session start (wallet × alloc %). */
+export function allocatedSeed(cfg: EngineConfig): number {
+  return cfg.startingCapitalInr * (clampAlloc(cfg.allocPct) / 100);
+}
+
+/** Allocated seed plus realized session PnL — this is what sizes slots. */
+export function tradingEquity(cfg: EngineConfig, realizedNetInr: number): number {
+  return allocatedSeed(cfg) + realizedNetInr;
+}
 
 export function hurdlePct(cfg: EngineConfig): number {
   return cfg.entryTakerFee + cfg.exitTakerFee + cfg.slippageBuffer;

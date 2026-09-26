@@ -1,4 +1,4 @@
-"""LAGFORGE — Binance lead / CoinSwitch PRO lag. Paper by default."""
+"""LAGFORGE — Binance lead / CoinSwitch or CoinDCX lag. Paper by default."""
 
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ from models import Books, Position, Trade
 from order_executor import OrderExecutor, mark_px
 from persistence import Store
 from portfolio import PortfolioManager
-from risk_manager import RiskManager
+from risk_manager import RiskManager, net_usdt
 from signal_engine import evaluate
 from telegram_reporter import TelegramReporter
+from wallet import fetch_wallet_inr
 
 log = logging.getLogger("lagforge")
 
@@ -51,13 +52,15 @@ class Engine:
         self.hour_index = 0
         self.hour_start = time.time()
         self.mode = "PAPER" if not self.cfg.live_enabled else "LIVE"
+        self.halted = False
+        self.wallet_inr = self.cfg.starting_capital_inr
 
     def _kick(self) -> None:
         self._event.set()
 
     async def recover(self) -> None:
         await self.store.open()
-        equity = await self.store.get_kv("equity_inr", self.cfg.starting_capital_inr)
+        equity = await self.store.get_kv("equity_inr", self.cfg.allocated_seed())
         self.portfolio.equity_inr = float(equity)
         self.portfolio.realized_net_inr = float(await self.store.get_kv("realized_net_inr", 0.0))
         recovered = await self.store.load_positions()
@@ -70,9 +73,12 @@ class Engine:
     async def start(self) -> None:
         setup_logging(self.cfg.log_level)
         log.info(
-            "LAGFORGE start mode=%s capital=₹%.0f slots=%s lev=%sx hurdle=%.4f%%",
+            "LAGFORGE start mode=%s venue=%s capital=₹%.0f alloc=%.0f%% maxloss=₹%.0f slots=%s lev=%sx hurdle=%.4f%%",
             self.mode,
+            self.cfg.lag_venue,
             self.cfg.starting_capital_inr,
+            self.cfg.alloc_pct,
+            self.cfg.max_session_loss_inr,
             self.cfg.slot_count,
             self.cfg.leverage,
             self.cfg.hurdle * 100,
@@ -80,7 +86,7 @@ class Engine:
         if self.cfg.paper_trading:
             log.info("PAPER_TRADING=true — no live orders")
         elif not self.cfg.live_enabled:
-            log.error("Live requested but CONFIRM_LIVE!=YES or keys missing. Staying paper.")
+            log.error("Live requested but CONFIRM_LIVE!=YES or keys missing for %s. Staying paper.", self.cfg.lag_venue)
             self.cfg.paper_trading = True
             self.mode = "PAPER"
 
@@ -88,7 +94,9 @@ class Engine:
         await self.exec.open()
         await self.tg.open()
         await self.tg.send(
-            f"LAGFORGE armed {self.mode}\n₹{self.cfg.starting_capital_inr:.0f} / {self.cfg.slot_count} slots / {self.cfg.leverage}x"
+            f"LAGFORGE armed {self.mode} {self.cfg.lag_venue}\n"
+            f"wallet ₹{self.cfg.starting_capital_inr:.0f} · {self.cfg.alloc_pct:.0f}% in play · "
+            f"{self.cfg.slot_count} slots / {self.cfg.leverage}x · max loss ₹{self.cfg.max_session_loss_inr:.0f}"
         )
 
         stop = asyncio.Event()
@@ -107,6 +115,7 @@ class Engine:
 
         ingest_task = asyncio.create_task(self.ingest.run())
         hour_task = asyncio.create_task(self._hour_loop(stop))
+        wallet_task = asyncio.create_task(self._wallet_loop(stop))
         try:
             while not stop.is_set():
                 try:
@@ -118,6 +127,7 @@ class Engine:
         finally:
             self.ingest.stop()
             hour_task.cancel()
+            wallet_task.cancel()
             ingest_task.cancel()
             await self.exec.close()
             await self.tg.close()
@@ -135,6 +145,44 @@ class Engine:
                     self.portfolio.free_inr(),
                 )
                 self.hour_start = time.time()
+
+    async def _wallet_loop(self, stop: asyncio.Event) -> None:
+        await asyncio.sleep(2)
+        while not stop.is_set():
+            try:
+                session = self.exec._session
+                if session is not None:
+                    bal = await fetch_wallet_inr(self.cfg, session, self.books.usdt_inr)
+                    if bal is not None and bal > 0:
+                        self.wallet_inr = bal
+                        if self.cfg.live_enabled:
+                            self.cfg.starting_capital_inr = bal
+                            self.portfolio.equity_inr = self.cfg.allocated_seed() + self.portfolio.realized_net_inr
+                        log.info("%s wallet ₹%.2f (alloc ₹%.2f)", self.cfg.lag_venue, bal, self.cfg.allocated_seed())
+            except Exception as exc:
+                log.warning("wallet loop: %s", exc)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
+
+    def _unrealized_inr(self) -> float:
+        total = 0.0
+        usdt_inr = self.books.usdt_inr
+        for pos in self.portfolio.positions.values():
+            lag = self.books.lag.get(pos.symbol)
+            if lag is None:
+                continue
+            mark = mark_px(pos.side, lag)
+            total += net_usdt(
+                pos.side,
+                pos.entry_px,
+                mark,
+                pos.qty,
+                self.cfg.entry_taker_fee,
+                self.cfg.exit_taker_fee,
+            ) * usdt_inr
+        return total
 
     async def tick(self) -> None:
         async with self._busy:
@@ -157,6 +205,13 @@ class Engine:
                 if reason:
                     await self._close(pos, lag, reason, now)
 
+            if self.halted:
+                return
+
+            if self.risk.session_should_halt(self.portfolio.realized_net_inr, self._unrealized_inr()):
+                await self._halt_max_loss(now)
+                return
+
             if len(self.portfolio.positions) >= self.cfg.slot_count:
                 return
 
@@ -176,6 +231,23 @@ class Engine:
                     continue
                 await self._open(sig.side, symbol, qty, sig.divergence, sig.lead_mid, lag, now)
 
+    async def _halt_max_loss(self, now: int) -> None:
+        self.halted = True
+        log.error(
+            "MAX SESSION LOSS hit realized=₹%.2f cap=₹%.2f — flattening and stopping entries",
+            self.portfolio.realized_net_inr,
+            self.cfg.max_session_loss_inr,
+        )
+        for pos in list(self.portfolio.positions.values()):
+            lag = self.books.lag.get(pos.symbol)
+            if lag is None:
+                continue
+            await self._close(pos, lag, "KILL", now)
+        await self.tg.send(
+            f"LAGFORGE HALTED max session loss\n"
+            f"realized ₹{self.portfolio.realized_net_inr:.2f} · cap ₹{self.cfg.max_session_loss_inr:.0f} · {self.cfg.lag_venue}"
+        )
+
     async def _open(self, side, symbol, qty, divergence, target, lag, now) -> None:  # type: ignore[no-untyped-def]
         t0 = time.perf_counter()
         try:
@@ -185,7 +257,7 @@ class Engine:
             return
         if filled <= 0:
             return
-        tgt, stop, timeout = self.risk.levels(symbol, side, px, target)
+        tgt, stop, timeout = self.risk.levels(symbol, side, px, target, lag)
         pos = Position(
             id=uuid.uuid4().hex,
             symbol=symbol,

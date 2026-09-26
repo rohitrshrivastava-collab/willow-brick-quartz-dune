@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiBotZipRouteImport } from './routes/api/bot-zip'
 import { Route as ApiLatencyRouteImport } from './routes/api/latency'
 import { Route as ApiMarketRouteImport } from './routes/api/market'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBotZipRoute = ApiBotZipRouteImport.update({
+  id: '/api/bot-zip',
+  path: '/api/bot-zip',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiLatencyRoute = ApiLatencyRouteImport.update({
@@ -31,30 +37,34 @@ const ApiMarketRoute = ApiMarketRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/bot-zip': typeof ApiBotZipRoute
   '/api/latency': typeof ApiLatencyRoute
   '/api/market': typeof ApiMarketRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/bot-zip': typeof ApiBotZipRoute
   '/api/latency': typeof ApiLatencyRoute
   '/api/market': typeof ApiMarketRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/bot-zip': typeof ApiBotZipRoute
   '/api/latency': typeof ApiLatencyRoute
   '/api/market': typeof ApiMarketRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/latency' | '/api/market'
+  fullPaths: '/' | '/api/bot-zip' | '/api/latency' | '/api/market'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/latency' | '/api/market'
-  id: '__root__' | '/' | '/api/latency' | '/api/market'
+  to: '/' | '/api/bot-zip' | '/api/latency' | '/api/market'
+  id: '__root__' | '/' | '/api/bot-zip' | '/api/latency' | '/api/market'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiBotZipRoute: typeof ApiBotZipRoute
   ApiLatencyRoute: typeof ApiLatencyRoute
   ApiMarketRoute: typeof ApiMarketRoute
 }
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/bot-zip': {
+      id: '/api/bot-zip'
+      path: '/api/bot-zip'
+      fullPath: '/api/bot-zip'
+      preLoaderRoute: typeof ApiBotZipRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/latency': {
@@ -87,6 +104,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiBotZipRoute: ApiBotZipRoute,
   ApiLatencyRoute: ApiLatencyRoute,
   ApiMarketRoute: ApiMarketRoute,
 }

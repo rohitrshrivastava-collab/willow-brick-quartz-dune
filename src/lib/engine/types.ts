@@ -1,6 +1,7 @@
 export type Side = "LONG" | "SHORT";
-export type ExitReason = "TARGET" | "TIMEOUT" | "STOP" | "SCRATCH" | "MANUAL";
+export type ExitReason = "TARGET" | "TIMEOUT" | "STOP" | "SCRATCH" | "MANUAL" | "KILL";
 export type EngineStatus = "idle" | "running" | "paused";
+export type LagVenue = "COINSWITCH" | "COINDCX";
 export type AppView =
   | "desk"
   | "universe"
@@ -116,7 +117,10 @@ export type LatencySample = {
 
 export type EngineConfig = {
   paperTrading: boolean;
+  lagVenue: LagVenue;
   startingCapitalInr: number;
+  allocPct: number;
+  maxSessionLossInr: number;
   slotCount: number;
   leverage: number;
   entryTakerFee: number;

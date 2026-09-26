@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import time
 import urllib.parse
@@ -12,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from config import Config
 from models import Book, Side
 from rate_limit import TokenBucket
+from venues import dcx_pair
 
 log = logging.getLogger("lagforge.exec")
 
@@ -48,6 +52,20 @@ class OrderExecutor:
         }
         return headers, decoded
 
+    def _dcx_headers(self, body: dict[str, Any]) -> tuple[dict[str, str], str]:
+        raw = json.dumps(body, separators=(",", ":"))
+        sig = hmac.new(
+            self.cfg.coindcx_secret_key.encode("utf-8"),
+            raw.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-AUTH-APIKEY": self.cfg.coindcx_api_key,
+            "X-AUTH-SIGNATURE": sig,
+        }
+        return headers, raw
+
     async def place(
         self,
         *,
@@ -66,6 +84,19 @@ class OrderExecutor:
             return fill_qty, fill_px, f"PAPER-{uuid.uuid4().hex[:12]}"
 
         await self.bucket.acquire()
+        assert self._session is not None
+        if self.cfg.lag_venue == "COINDCX":
+            return await self._place_dcx(symbol, side, qty, tob_px, reduce_only)
+        return await self._place_cs(symbol, side, qty, tob_px, reduce_only)
+
+    async def _place_cs(
+        self,
+        symbol: str,
+        side: Side,
+        qty: float,
+        tob_px: float,
+        reduce_only: bool,
+    ) -> tuple[float, float, str]:
         assert self._session is not None
         if reduce_only:
             cs_side = "SELL" if side == "LONG" else "BUY"
@@ -97,6 +128,55 @@ class OrderExecutor:
         if filled <= 0:
             raise RuntimeError(f"zero fill {payload}")
         log.info("live fill %s %s qty=%s px=%s dt=%.1fms", side, symbol, filled, avg, (time.perf_counter() - t0) * 1000)
+        return filled, avg, order_id
+
+    async def _place_dcx(
+        self,
+        symbol: str,
+        side: Side,
+        qty: float,
+        tob_px: float,
+        reduce_only: bool,
+    ) -> tuple[float, float, str]:
+        assert self._session is not None
+        if reduce_only:
+            dcx_side = "sell" if side == "LONG" else "buy"
+        else:
+            dcx_side = "buy" if side == "LONG" else "sell"
+        body = {
+            "timestamp": int(time.time() * 1000),
+            "order": {
+                "side": dcx_side,
+                "pair": dcx_pair(symbol),
+                "order_type": "market_order",
+                "total_quantity": qty,
+                "leverage": self.cfg.leverage,
+                "notification": "no_notification",
+                "time_in_force": "good_till_cancel",
+                "hidden": False,
+                "post_only": False,
+                "margin_currency_short_name": "USDT",
+            },
+        }
+        headers, raw = self._dcx_headers(body)
+        url = f"{self.cfg.coindcx_base_url}/exchange/v1/derivatives/futures/orders/create"
+        t0 = time.perf_counter()
+        async with self._session.post(url, data=raw, headers=headers) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status >= 400:
+                raise RuntimeError(f"dcx order rejected {resp.status} {data}")
+        payload = data if isinstance(data, dict) else {}
+        order_id = str(payload.get("id") or payload.get("order_id") or "")
+        filled = float(payload.get("total_quantity") or payload.get("filled_quantity") or qty)
+        remaining = float(payload.get("remaining_quantity") or 0)
+        if remaining > 0:
+            filled = max(0.0, filled - remaining)
+        avg = float(payload.get("avg_price") or payload.get("price") or tob_px)
+        if filled <= 0:
+            filled = qty
+        if avg <= 0:
+            avg = tob_px
+        log.info("dcx fill %s %s qty=%s px=%s dt=%.1fms", side, symbol, filled, avg, (time.perf_counter() - t0) * 1000)
         return filled, avg, order_id
 
     async def _poll_fill(self, order_id: str, filled: float, avg: float, fallback_px: float) -> tuple[float, float]:

@@ -3,25 +3,33 @@ import {
   BarChart3,
   Bell,
   Code2,
+  Copy,
+  ExternalLink,
   Gauge,
   GitBranch,
   Layers,
+  Lock,
   Pause,
   Play,
   RotateCcw,
   ScrollText,
   Settings2,
+  Wallet,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spark } from "@/components/spark";
 import { netUsdt, sessionStats } from "@/lib/engine/core";
-import { hurdlePct, minQty } from "@/lib/engine/config";
+import { hurdlePct, minQty, venueLabel, venueShort, VENUE_PROFILE } from "@/lib/engine/config";
 import { PYTHON_FILES } from "@/lib/engine/python-files";
 import { useDesk } from "@/lib/engine/store";
-import type { AppView } from "@/lib/engine/types";
+import type { AppView, LagVenue } from "@/lib/engine/types";
 import { ago, base, clsDelta, hhmmss, inr, pct, px } from "@/lib/format";
 import { cn } from "@/lib/cn";
+
+const REPO_PAGE = "https://github.com/rohitrshrivastava-collab/lagforge-bot";
+const REPO_CLONE = `${REPO_PAGE}.git`;
+const REPO_ZIP = `${REPO_PAGE}/archive/refs/heads/main.zip`;
 
 const NAV: { id: AppView; label: string; icon: typeof Activity }[] = [
   { id: "desk", label: "Desk", icon: Activity },
@@ -43,6 +51,8 @@ export function DeskApp() {
   const start = useDesk((s) => s.start);
   const stop = useDesk((s) => s.stop);
   const resetSession = useDesk((s) => s.resetSession);
+  const liveIntent = useDesk((s) => s.liveIntent);
+  const setLiveIntent = useDesk((s) => s.setLiveIntent);
   const status = engine.status;
   const pollMs = engine.cfg.pollMs;
 
@@ -85,27 +95,59 @@ export function DeskApp() {
             <div className="flex items-baseline gap-3">
               <h1 className="font-sans text-xl font-medium tracking-tight text-balance">LAGFORGE</h1>
               <p className="text-xxs uppercase tracking-[0.18em] text-muted">
-                Binance → CoinSwitch PRO
+                Binance → {venueLabel(engine.cfg.lagVenue)}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Pill tone="accent">PAPER</Pill>
-              <Pill>{engine.venue.split(" ")[0] || "FEED"}</Pill>
-              <Pill tone={status === "running" ? "long" : "muted"}>
-                {status === "running" ? "LIVE LOOP" : status === "paused" ? "PAUSED" : "ARMED"}
+              <VenueToggle compact />
+              <div className="flex rounded-sm shadow-[var(--shadow-border)]">
+                <button
+                  type="button"
+                  onClick={() => setLiveIntent(false)}
+                  className={cn(
+                    "h-8 px-3 text-xxs font-medium uppercase tracking-wider",
+                    !liveIntent ? "bg-accent text-accent-fg" : "text-muted",
+                  )}
+                >
+                  Paper
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLiveIntent(true)}
+                  className={cn(
+                    "h-8 px-3 text-xxs font-medium uppercase tracking-wider",
+                    liveIntent ? "bg-short text-fg" : "text-muted",
+                  )}
+                >
+                  Live
+                </button>
+              </div>
+              <Pill>{venueShort(engine.cfg.lagVenue)}</Pill>
+              <Pill tone={engine.halted ? "short" : status === "running" ? "long" : "muted"}>
+                {engine.halted
+                  ? "MAX LOSS"
+                  : status === "running"
+                    ? "LOOP ON"
+                    : status === "paused"
+                      ? "PAUSED"
+                      : "ARMED"}
               </Pill>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-            <Stat label="Mark equity" value={inr(stats.markEquity, 0)} />
+            <Stat label={`${venueShort(engine.cfg.lagVenue)} paper wallet`} value={inr(stats.walletInr, 0)} />
+            <Stat label={`Allocated ${engine.cfg.allocPct}%`} value={inr(stats.allocatedInr, 0)} />
             <Stat
               label="Session net"
-              value={inr(engine.realizedNetInr)}
-              tone={engine.realizedNetInr}
+              value={inr(stats.sessionPnl)}
+              tone={stats.sessionPnl}
             />
-            <Stat label="Free margin" value={inr(stats.freeInr, 0)} />
+            <Stat
+              label="Loss remaining"
+              value={engine.cfg.maxSessionLossInr > 0 ? inr(stats.lossRemaining, 0) : "off"}
+              tone={engine.halted ? -1 : stats.lossRemaining}
+            />
             <Stat label="Open slots" value={`${engine.positions.length}/${engine.cfg.slotCount}`} />
-            <Stat label="Win rate" value={`${stats.winRate.toFixed(0)}% · ${stats.trades} tr`} />
             <Stat label="USDT/INR" value={engine.usdtInr.toFixed(3)} />
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -114,18 +156,49 @@ export function DeskApp() {
                 <Pause className="size-4" /> Pause
               </Button>
             ) : (
-              <Button variant="accent" onClick={start}>
-                <Play className="size-4" /> Start paper loop
+              <Button
+                variant="accent"
+                onClick={start}
+                disabled={
+                  engine.halted &&
+                  engine.cfg.maxSessionLossInr > 0 &&
+                  stats.lossUsed >= engine.cfg.maxSessionLossInr
+                }
+              >
+                <Play className="size-4" />{" "}
+                {engine.halted && stats.lossUsed >= engine.cfg.maxSessionLossInr
+                  ? "Halted — raise cap or reset"
+                  : "Start paper loop"}
               </Button>
             )}
             <Button variant="ghost" onClick={resetSession}>
               <RotateCcw className="size-4" /> Reset
             </Button>
             <p className="min-w-0 basis-full text-xs text-pretty text-muted sm:basis-auto">
-              ₹{engine.cfg.startingCapitalInr.toLocaleString("en-IN")} · {engine.cfg.slotCount} slots ·{" "}
-              {engine.cfg.leverage}× · hurdle {pct(hurdle)} · lag {engine.cfg.lagMs}ms
+              ₹{engine.cfg.startingCapitalInr.toLocaleString("en-IN")} wallet · {engine.cfg.allocPct}% in
+              play · {engine.cfg.slotCount} slots · {engine.cfg.leverage}× · hurdle {pct(hurdle)} ·{" "}
+              {venueShort(engine.cfg.lagVenue)}
             </p>
           </div>
+          {engine.halted ? (
+            <div className="rounded-md bg-short/15 px-3 py-3 text-sm text-pretty">
+              <p className="font-medium text-short">Session max loss hit. Trading is stopped.</p>
+              <p className="mt-1 text-muted">
+                Open slots were flattened. Raise the max-loss cap or reset the session before starting
+                the loop again.
+              </p>
+            </div>
+          ) : null}
+          {liveIntent ? (
+            <div className="rounded-md bg-short/15 px-3 py-3 text-sm text-pretty">
+              <p className="font-medium text-short">This desk cannot place {venueLabel(engine.cfg.lagVenue)} orders.</p>
+              <p className="mt-1 text-muted">
+                Do not send API keys in chat and do not paste them here. Live trading only runs on
+                the Python bot on your machine: keys in a local .env, PAPER_TRADING=false, and
+                CONFIRM_LIVE=YES. The loop you start in this preview stays paper.
+              </p>
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -184,17 +257,272 @@ function Pill({
   tone = "muted",
 }: {
   children: React.ReactNode;
-  tone?: "muted" | "accent" | "long";
+  tone?: "muted" | "accent" | "long" | "short";
 }) {
   const map = {
     muted: "text-muted shadow-[var(--shadow-border)]",
     accent: "text-accent-fg bg-accent",
     long: "text-long shadow-[var(--shadow-border)]",
+    short: "text-short shadow-[var(--shadow-border)]",
   };
   return (
     <span className={cn("rounded-sm px-2 py-1 text-xxs font-medium uppercase tracking-wider", map[tone])}>
       {children}
     </span>
+  );
+}
+
+function CopyCloneButton() {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(REPO_CLONE);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className="inline-flex h-11 items-center gap-2 rounded-md bg-fg px-4 text-sm font-medium text-bg"
+    >
+      <Copy className="size-4" />
+      {copied ? "Copied" : "Copy GitHub clone URL"}
+    </button>
+  );
+}
+
+function DownloadPackButton() {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await fetch("/api/bot-zip", { cache: "no-store" });
+      if (!res.ok) throw new Error("pack missing");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "lagforge-bot.zip";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setNote("If Quick Heal blocks this preview, skip this button. Use GitHub instead.");
+    } catch {
+      setNote("This preview blocked the save. Open GitHub and clone or download the zip there.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={busy}
+        className="inline-flex h-11 items-center rounded-md px-4 text-sm text-muted shadow-[var(--shadow-border)] disabled:opacity-60"
+      >
+        {busy ? "Preparing zip…" : "Last resort: zip from this preview"}
+      </button>
+      {note ? <p className="text-xs text-pretty text-muted">{note}</p> : null}
+    </div>
+  );
+}
+
+function ModePanel() {
+  const liveIntent = useDesk((s) => s.liveIntent);
+  const setLiveIntent = useDesk((s) => s.setLiveIntent);
+  const venue = useDesk((s) => s.engine.cfg.lagVenue);
+  return (
+    <div className="mb-4 rounded-md bg-elevated px-3 py-3">
+      <p className="text-xxs uppercase tracking-wider text-muted">Execution mode</p>
+      <div className="mt-2 flex rounded-sm shadow-[var(--shadow-border)]">
+        <button
+          type="button"
+          onClick={() => setLiveIntent(false)}
+          className={cn(
+            "h-10 flex-1 px-3 text-sm",
+            !liveIntent ? "bg-accent text-accent-fg" : "text-muted",
+          )}
+        >
+          Paper
+        </button>
+        <button
+          type="button"
+          onClick={() => setLiveIntent(true)}
+          className={cn(
+            "h-10 flex-1 px-3 text-sm",
+            liveIntent ? "bg-short text-fg" : "text-muted",
+          )}
+        >
+          Live
+        </button>
+      </div>
+      <p className="mt-2 text-xs text-pretty text-muted">
+        {liveIntent
+          ? "Live is the Python bot on your machine only. This preview will not send exchange orders and will not accept API keys."
+          : `Paper fills against the live Binance tape with a lagged ${venueLabel(venue)} book. No orders leave this desk.`}
+      </p>
+    </div>
+  );
+}
+
+function VenueToggle({ compact = false }: { compact?: boolean }) {
+  const venue = useDesk((s) => s.engine.cfg.lagVenue);
+  const setLagVenue = useDesk((s) => s.setLagVenue);
+  const options: LagVenue[] = ["COINSWITCH", "COINDCX"];
+  return (
+    <div className={cn("flex rounded-sm shadow-[var(--shadow-border)]", compact ? "" : "w-full")}>
+      {options.map((id) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => setLagVenue(id)}
+          className={cn(
+            compact
+              ? "h-8 px-3 text-xxs font-medium uppercase tracking-wider"
+              : "h-11 flex-1 px-3 text-sm",
+            venue === id ? "bg-accent text-accent-fg" : "text-muted",
+          )}
+        >
+          {compact ? venueShort(id) : VENUE_PROFILE[id].label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function KeysLockPanel() {
+  const venue = useDesk((s) => s.engine.cfg.lagVenue);
+  const liveIntent = useDesk((s) => s.liveIntent);
+  const keyName = venue === "COINDCX" ? "COINDCX_API_KEY / COINDCX_SECRET_KEY" : "COINSWITCH_API_KEY / COINSWITCH_SECRET_KEY";
+  return (
+    <div className="rounded-md bg-elevated px-3 py-3">
+      <div className="flex items-center gap-2">
+        <Lock className="size-4 text-muted" />
+        <p className="text-xxs uppercase tracking-wider text-muted">Exchange keys</p>
+      </div>
+      <p className="mt-2 text-sm text-pretty">
+        Keys for {venueLabel(venue)} are not pasted here. This preview is a public page — anything
+        typed into these boxes would sit in the browser.
+      </p>
+      <div className="mt-3 grid gap-2">
+        <div className="flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted">
+          <span>API key</span>
+          <span className="font-mono text-xxs">locked</span>
+        </div>
+        <div className="flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted">
+          <span>Secret key</span>
+          <span className="font-mono text-xxs">locked</span>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-pretty text-muted">
+        On your PC, put {keyName} in the local .env next to main.py. Keep PAPER_TRADING=true until
+        the 72-hour tape is done, then set PAPER_TRADING=false and CONFIRM_LIVE=YES on that box
+        only.
+        {liveIntent ? " The Live switch on this desk is intent — it still cannot fire orders." : ""}
+      </p>
+    </div>
+  );
+}
+
+function CapitalPanel() {
+  const cfg = useDesk((s) => s.engine.cfg);
+  const patch = useDesk((s) => s.patchConfig);
+  const stats = sessionStats(useDesk((s) => s.engine));
+  const halted = useDesk((s) => s.engine.halted);
+
+  return (
+    <Panel
+      title="Capital & session risk"
+      kicker={venueLabel(cfg.lagVenue)}
+      className="lg:col-span-5"
+    >
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-3">
+          <div>
+            <p className="mb-2 text-xxs uppercase tracking-wider text-muted">Lag exchange</p>
+            <VenueToggle />
+            <p className="mt-2 text-xs text-pretty text-muted">
+              Lead stays Binance. Fees and the live order path switch with this toggle. CoinSwitch
+              taker 0.065%. CoinDCX USDT-M taker 0.05% + GST.
+            </p>
+          </div>
+          <div className="rounded-md bg-elevated px-3 py-3">
+            <div className="flex items-center gap-2">
+              <Wallet className="size-4 text-muted" />
+              <p className="text-xxs uppercase tracking-wider text-muted">
+                {venueShort(cfg.lagVenue)} wallet
+              </p>
+            </div>
+            <p className="mt-2 font-mono text-2xl tabular">{inr(stats.walletInr, 0)}</p>
+            <p className="mt-1 text-xs text-pretty text-muted">
+              Paper wallet = your starting INR plus this session's marked PnL. A live{" "}
+              {venueLabel(cfg.lagVenue)} balance is fetched by the Python bot when keys are in .env —
+              never by this browser.
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-3">
+          <Field
+            label="Paper wallet seed (INR)"
+            value={cfg.startingCapitalInr}
+            onChange={(v) => patch({ startingCapitalInr: v })}
+          />
+          <Field
+            label="% of wallet allocated to trade"
+            value={cfg.allocPct}
+            onChange={(v) => patch({ allocPct: v })}
+            suffix="%"
+          />
+          <div className="flex flex-wrap gap-2">
+            {[25, 50, 75, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => patch({ allocPct: n })}
+                className={cn(
+                  "h-9 min-w-11 rounded-sm px-3 text-xs",
+                  cfg.allocPct === n ? "bg-accent text-accent-fg" : "text-muted shadow-[var(--shadow-border)]",
+                )}
+              >
+                {n}%
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-pretty text-muted">
+            Slots size from {inr(stats.allocatedInr, 0)} ({cfg.allocPct}% of the seed). The rest of
+            the wallet stays idle.
+          </p>
+          <Field
+            label="Max session loss (INR) — halt if hit"
+            value={cfg.maxSessionLossInr}
+            onChange={(v) => patch({ maxSessionLossInr: v })}
+          />
+          <p className={cn("text-xs text-pretty", halted ? "text-short" : "text-muted")}>
+            {halted
+              ? "Cap reached. Loop is stopped and open slots were flattened."
+              : cfg.maxSessionLossInr > 0
+                ? `${inr(stats.lossUsed, 0)} used · ${inr(stats.lossRemaining, 0)} left. At the cap the loop stops immediately.`
+                : "Set a rupee amount. 0 turns the kill switch off."}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4">
+        <KeysLockPanel />
+      </div>
+    </Panel>
   );
 }
 
@@ -240,6 +568,7 @@ function DeskView() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-5">
+      <CapitalPanel />
       <Panel title="Open positions" kicker={`${open.length} locked`} className="lg:col-span-3">
         {open.length === 0 ? (
           <Empty text={engine.status === "running" ? "Waiting for a net-spread print above hurdle." : "Start the paper loop to arm the ten slots."} />
@@ -248,12 +577,6 @@ function DeskView() {
             {open.map((p) => {
               const pair = engine.pairs[p.symbol];
               const mark = p.side === "LONG" ? pair?.lag?.bid : pair?.lag?.ask;
-              const u =
-                mark !== undefined
-                  ? p.side === "LONG"
-                    ? (mark - p.entryPx) * p.qty * engine.usdtInr
-                    : (p.entryPx - mark) * p.qty * engine.usdtInr
-                  : 0;
               const net =
                 mark !== undefined
                   ? netUsdt(
@@ -268,10 +591,11 @@ function DeskView() {
               const remain = Math.max(0, (p.timeoutTs - engine.lastTick) / 1000);
               const timeoutLabel =
                 remain > 0
-                  ? `${remain.toFixed(0)}s${p.armedBreakeven ? " · BE" : ""}`
-                  : net >= 0
+                  ? `${remain.toFixed(0)}s`
+                  : net > 0
                     ? "flatten green"
                     : "hold, no timeout loss";
+              const netInr = net * engine.usdtInr;
               return (
                 <li
                   key={p.id}
@@ -281,7 +605,7 @@ function DeskView() {
                   <Cell label="Fill" value={px(p.entryPx)} />
                   <Cell label="Target / stop" value={`${px(p.targetPx)} · ${px(p.stopPx)}`} />
                   <Cell label="Qty" value={`${p.filledQty}${p.filledQty < p.requestedQty ? " part" : ""}`} />
-                  <Cell label="Unreal" value={inr(u)} tone={u} />
+                  <Cell label="Unreal" value={inr(netInr)} tone={netInr} />
                   <Cell label="Timeout" value={timeoutLabel} />
                 </li>
               );
@@ -328,7 +652,7 @@ function DeskView() {
               <tr className="border-b border-border">
                 <th className="pb-2 font-medium">Coin</th>
                 <th className="pb-2 font-medium">Binance mid</th>
-                <th className="pb-2 font-medium">CS bid / ask</th>
+                <th className="pb-2 font-medium">{venueShort(engine.cfg.lagVenue)} bid / ask</th>
                 <th className="pb-2 font-medium">Long Δ</th>
                 <th className="pb-2 font-medium">Short Δ</th>
                 <th className="pb-2 font-medium">Slot</th>
@@ -586,23 +910,23 @@ function ArchitectureView() {
   const mods = [
     {
       name: "DataIngestion",
-      body: "Persistent WebSockets only for prices. Binance futures bookTicker is the lead. CoinSwitch PRO Socket.IO order-book snapshots are the lag. REST is banned from the trigger path.",
+      body: "Persistent WebSockets only for prices. Binance futures bookTicker is the lead. CoinSwitch PRO or CoinDCX futures order-book is the lag, picked on the desk. REST is banned from the trigger path.",
     },
     {
       name: "SignalEngine",
-      body: "Compares Binance mid to CoinSwitch best ask (long) and best bid (short). Fires only when gross divergence clears entry taker + exit fee + slippage buffer. Never uses LTP.",
+      body: "Compares Binance mid to the lag venue best ask (long) and best bid (short). Fires only when expected catch-up (lead mid minus the lag spread) is still net-green after that venue's fees. Never uses LTP.",
     },
     {
       name: "PortfolioManager",
-      body: "₹10,000 start. Equal weight: available equity / 10. One locked slot per coin until fully closed. Lot-size gate rejects coins whose min contract exceeds slot notional × leverage.",
+      body: "Paper wallet seed (default ₹10,000). Only the allocation % is tradable: that slice / 10 slots. One locked slot per coin until fully closed. Lot-size gate rejects coins whose min contract exceeds slot notional × leverage.",
     },
     {
       name: "OrderExecutor",
-      body: "Sizes to ≤25% of top-of-book. Tracks partial fills and resizes the exit to filled qty. Token-bucket 15/min. Paper fills against live TOB; live uses Ed25519-signed CoinSwitch futures orders.",
+      body: "Sizes to ≤25% of top-of-book. Tracks partial fills and resizes the exit to filled qty. Token-bucket 15/min. Paper fills against live TOB; live uses CoinSwitch Ed25519 or CoinDCX HMAC futures orders.",
     },
     {
       name: "RiskManager",
-      body: "Target = Binance mid at entry. Timeout (45s) flattens only if the close is net-green after fees — it will not realize a timeout loss. Once the trade is green, the stop ratchets to scratch so a giveback cannot turn a winner red. Hard vol stop still cuts violent reversals.",
+      body: "Target = Binance mid at entry, taken only if the close is net-green after fees. Timeout (45s) is profit-only. The vol stop is the only per-trade loss exit. A session max-loss cap flattens everything and halts the loop.",
     },
     {
       name: "TelegramReporter",
@@ -616,7 +940,7 @@ function ArchitectureView() {
           {[
             "Binance bookTicker WS",
             "Hurdle + depth gate",
-            "CoinSwitch futures / HFT order",
+            "CoinSwitch or CoinDCX futures order",
             "Partial fill tracker",
             "Target / stop / profit-only timeout",
             "SQLite + Telegram",
@@ -628,9 +952,9 @@ function ArchitectureView() {
           ))}
         </ol>
         <p className="mt-4 text-sm text-pretty text-muted">
-          CoinSwitch PRO perpetual futures are USDT-margined. INR is the capital and reporting currency.
-          USDT/INR is a live FX tape used to size slots and publish ₹ PnL — not a hardcoded multiplier.
-          If a venue quoted INR, the same FX book would translate the Binance USDT mid before the hurdle.
+          CoinSwitch PRO and CoinDCX perpetual futures are USDT-margined. INR is the capital and
+          reporting currency. Pick the lag venue on the desk. USDT/INR is a live FX tape used to
+          size slots and publish ₹ PnL — not a hardcoded multiplier.
         </p>
       </Panel>
       <div className="grid gap-3 md:grid-cols-2">
@@ -651,12 +975,32 @@ function ConfigView() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Paper desk parameters" kicker="always paper in this preview">
+        <ModePanel />
+        <div className="mb-4">
+          <p className="mb-2 text-xxs uppercase tracking-wider text-muted">Lag exchange</p>
+          <VenueToggle />
+        </div>
         <div className="grid gap-3">
           <Field
-            label="Starting capital (INR)"
+            label="Starting capital / paper wallet (INR)"
             value={cfg.startingCapitalInr}
             onChange={(v) => patch({ startingCapitalInr: v })}
           />
+          <Field
+            label="% of wallet allocated to trade"
+            value={cfg.allocPct}
+            onChange={(v) => patch({ allocPct: v })}
+            suffix="%"
+          />
+          <Field
+            label="Max session loss (INR)"
+            value={cfg.maxSessionLossInr}
+            onChange={(v) => patch({ maxSessionLossInr: v })}
+          />
+          <p className="text-xs text-pretty text-muted">
+            If marked session loss reaches this amount, every open slot is flattened and the loop
+            stops. 0 disables the kill switch.
+          </p>
           <Field label="Slot count" value={cfg.slotCount} onChange={(v) => patch({ slotCount: v })} />
           <Field label="Leverage" value={cfg.leverage} onChange={(v) => patch({ leverage: v })} />
           <Field
@@ -666,8 +1010,8 @@ function ConfigView() {
           />
           <p className="text-xs text-pretty text-muted">
             Timeout never closes a loser. After 45s it only flattens if net PnL after fees is
-            positive. Green trades ratchet the stop to scratch so a giveback cannot print a timeout
-            loss.
+            positive. Target is also skipped unless the fill would be green. The vol stop is the only
+            path that can still print a loss.
           </p>
           <Field label="Lag buffer (ms)" value={cfg.lagMs} onChange={(v) => patch({ lagMs: v })} />
           <Field
@@ -682,13 +1026,20 @@ function ConfigView() {
           />
         </div>
         <p className="mt-4 text-xs text-pretty text-muted">
-          Live keys never enter this desk. Put them in env vars on the machine that runs the Python
-          bot. PAPER_TRADING stays true until you also set CONFIRM_LIVE=YES.
+          Never paste CoinSwitch, CoinDCX, or Binance secrets into this desk or into chat. Live keys
+          live only in env vars on the box that runs the Python bot. PAPER_TRADING stays true until
+          you also set CONFIRM_LIVE=YES on that box.
         </p>
+        <div className="mt-4">
+          <KeysLockPanel />
+        </div>
       </Panel>
       <Panel title="Local & EC2 runbook">
         <ol className="flex list-decimal flex-col gap-3 pl-4 text-sm text-pretty text-muted">
-          <li>Download the Python pack from the Python tab (or /lagforge-bot.zip).</li>
+          <li>
+            Skip this preview for the engine. Sign into GitHub as rohitrshrivastava-collab, then clone{" "}
+            <span className="font-mono text-xs text-fg">{REPO_CLONE}</span> in VS Code (Git: Clone).
+          </li>
           <li>Create a venv, pip install -r requirements.txt, copy env.example to .env.</li>
           <li>Run python latency_bench.py from the same region you will trade.</li>
           <li>python main.py with PAPER_TRADING=true for 72 hours.</li>
@@ -705,24 +1056,53 @@ function ConfigView() {
 function SourceView() {
   return (
     <div className="grid gap-4">
-      <Panel title="Production Python pack" kicker="VS Code + EC2">
+      <Panel title="Get the engine from GitHub" kicker="skip this preview zip">
         <p className="text-sm text-pretty text-muted">
-          Same modules as this desk: WebSocket lead/lag, equal-weight ₹ slots, hurdle gate, partial
-          fills, timeout, vol stop, SQLite recovery, Telegram. Paper by default.
+          Quick Heal flags this preview host (grok-sandbox.com) as a suspicious website. That is the
+          antivirus, not the bot. Do not download from here. Clone from GitHub instead — github.com
+          is a normal, trusted site.
         </p>
+        <p className="mt-3 font-mono text-xs break-all text-fg">{REPO_CLONE}</p>
+        <ol className="mt-4 flex list-decimal flex-col gap-2 pl-4 text-sm text-pretty text-muted">
+          <li>Install Python 3.11+ (Windows: tick Add python.exe to PATH) and VS Code with the Microsoft Python extension. Install Git if VS Code asks.</li>
+          <li>Sign into github.com as rohitrshrivastava-collab (the repo is private).</li>
+          <li>In VS Code: Ctrl+Shift+P → Git: Clone → paste the URL above → open the folder.</li>
+          <li>No Git? On the GitHub page click Code → Download ZIP, unzip, then File → Open Folder in VS Code.</li>
+          <li>In the VS Code terminal: python -m venv .venv, activate it, pip install -r requirements.txt.</li>
+          <li>Copy env.example to .env. Keep PAPER_TRADING=true. Add Telegram. Leave CoinSwitch keys empty for paper.</li>
+          <li>python main.py — leave that window open. Ctrl+C stops it.</li>
+          <li>EC2 ap-south-1 and CONFIRM_LIVE=YES only after a 72-hour paper tape that still beats fees.</li>
+        </ol>
         <div className="mt-4 flex flex-wrap gap-2">
+          <CopyCloneButton />
           <a
-            href="/lagforge-bot.zip"
-            className="inline-flex h-11 items-center rounded-md bg-fg px-4 text-sm font-medium text-bg"
+            href={REPO_PAGE}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center gap-2 rounded-md bg-elevated px-4 text-sm"
           >
-            Download lagforge-bot.zip
+            <ExternalLink className="size-4" />
+            Open GitHub
           </a>
+          <a
+            href={REPO_ZIP}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center rounded-md px-4 text-sm text-muted shadow-[var(--shadow-border)]"
+          >
+            GitHub zip (while signed in)
+          </a>
+        </div>
+        <div className="mt-3">
+          <DownloadPackButton />
         </div>
         <ul className="mt-5 grid gap-2 sm:grid-cols-2">
           {PYTHON_FILES.map((f) => (
             <li key={f.path}>
               <a
-                href={`/lagforge-bot/${f.path}`}
+                href={`${REPO_PAGE}/blob/main/${f.path}`}
+                target="_blank"
+                rel="noreferrer"
                 className="flex h-11 items-center justify-between rounded-md bg-elevated px-3 text-sm"
               >
                 <span>{f.label}</span>
@@ -798,20 +1178,29 @@ function Field({
   label,
   value,
   onChange,
+  suffix,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
+  suffix?: string;
 }) {
   return (
     <label className="grid gap-1 text-sm">
       <span className="text-xxs uppercase tracking-wider text-muted">{label}</span>
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="h-11 rounded-md bg-inset px-3 font-mono text-sm tabular text-fg shadow-[var(--shadow-border)]"
-      />
+      <span className="relative">
+        <input
+          type="number"
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="h-11 w-full rounded-md bg-inset px-3 font-mono text-sm tabular text-fg shadow-[var(--shadow-border)]"
+        />
+        {suffix ? (
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted">
+            {suffix}
+          </span>
+        ) : null}
+      </span>
     </label>
   );
 }

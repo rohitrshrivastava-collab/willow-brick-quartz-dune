@@ -1,8 +1,10 @@
 import { i as __toESM } from "../_runtime.mjs";
 import { L as require_react, _ as useRouter, f as createRouter, g as createRootRoute, h as createFileRoute, l as Scripts, m as lazyRouteComponent, p as Outlet, u as HeadContent, v as require_jsx_runtime } from "../_libs/@tanstack/react-router+[...].mjs";
-import { t as TriangleAlert } from "../_libs/lucide-react.mjs";
+import { n as TriangleAlert } from "../_libs/lucide-react.mjs";
 import { a as union, i as string, n as number, r as object, t as literal } from "../_libs/zod.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router--sKZyZsq.js
+import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+//#region node_modules/.nitro/vite/services/ssr/assets/router-BQnqGsw6.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var __defProp = Object.defineProperty;
@@ -306,9 +308,9 @@ function PreviewHostBridge() {
 	}, [router]);
 	return null;
 }
-var styles_default = "/assets/styles-DQSRBHVn.css";
+var styles_default = "/assets/styles-CCzf-_bC.css";
 var APP_NAME = "LAGFORGE";
-var Route$3 = createRootRoute({
+var Route$4 = createRootRoute({
 	head: () => ({
 		meta: [
 			{ charSet: "utf-8" },
@@ -373,8 +375,16 @@ var Route$3 = createRootRoute({
 		})]
 	})
 });
-var $$splitComponentImporter = () => import("./routes-DpLwhkzU.mjs");
-var Route$2 = createFileRoute("/")({ component: lazyRouteComponent($$splitComponentImporter, "component") });
+var $$splitComponentImporter = () => import("./routes-CaT-iJEQ.mjs");
+var Route$3 = createFileRoute("/")({ component: lazyRouteComponent($$splitComponentImporter, "component") });
+var Route$2 = createFileRoute("/api/bot-zip")({ server: { handlers: { GET: async () => {
+	const buf = await readFile(join(process.cwd(), "public", "lagforge-bot.zip"));
+	return new Response(buf, { headers: {
+		"Content-Type": "application/zip",
+		"Content-Disposition": "attachment; filename=\"lagforge-bot.zip\"",
+		"Cache-Control": "no-store"
+	} });
+} } } });
 async function rtt(url, ms = 4e3) {
 	const ctrl = new AbortController();
 	const t = setTimeout(() => ctrl.abort(), ms);
@@ -458,25 +468,73 @@ var CANDIDATE_SYMBOLS = [
 	"ATOMUSDT",
 	"FILUSDT"
 ];
+/** Taker fees as used for hurdle + PnL. CoinDCX 0.05% USDT-M + 18% GST. */
+var VENUE_PROFILE = {
+	COINSWITCH: {
+		label: "CoinSwitch PRO",
+		short: "CS",
+		entryTakerFee: 65e-5,
+		exitTakerFee: 65e-5,
+		extraLagSpreadBps: 4
+	},
+	COINDCX: {
+		label: "CoinDCX",
+		short: "DCX",
+		entryTakerFee: 59e-5,
+		exitTakerFee: 59e-5,
+		extraLagSpreadBps: 5
+	}
+};
 var DEFAULT_CONFIG = {
 	paperTrading: true,
+	lagVenue: "COINSWITCH",
 	startingCapitalInr: 1e4,
+	allocPct: 100,
+	maxSessionLossInr: 1e3,
 	slotCount: 10,
 	leverage: 10,
-	entryTakerFee: 65e-5,
-	exitTakerFee: 65e-5,
+	entryTakerFee: VENUE_PROFILE.COINSWITCH.entryTakerFee,
+	exitTakerFee: VENUE_PROFILE.COINSWITCH.exitTakerFee,
 	slippageBuffer: 5e-4,
 	maxTobPct: .25,
 	holdTimeoutSec: 45,
 	minStopPct: .0015,
 	volStopMult: 2.2,
 	lagMs: 220,
-	extraLagSpreadBps: 4,
+	extraLagSpreadBps: VENUE_PROFILE.COINSWITCH.extraLagSpreadBps,
 	maxSlippagePct: .001,
 	pollMs: 400,
 	calibrationHours: 72,
 	candidateSymbols: [...CANDIDATE_SYMBOLS]
 };
+function clampAlloc(n) {
+	if (!Number.isFinite(n)) return 100;
+	return Math.min(100, Math.max(1, Math.round(n)));
+}
+function venueLabel(venue) {
+	return VENUE_PROFILE[venue]?.label ?? venue;
+}
+function venueShort(venue) {
+	return VENUE_PROFILE[venue]?.short ?? venue;
+}
+function applyVenue(cfg, venue) {
+	const p = VENUE_PROFILE[venue];
+	return {
+		...cfg,
+		lagVenue: venue,
+		entryTakerFee: p.entryTakerFee,
+		exitTakerFee: p.exitTakerFee,
+		extraLagSpreadBps: p.extraLagSpreadBps
+	};
+}
+/** INR earmarked for slots at session start (wallet × alloc %). */
+function allocatedSeed(cfg) {
+	return cfg.startingCapitalInr * (clampAlloc(cfg.allocPct) / 100);
+}
+/** Allocated seed plus realized session PnL — this is what sizes slots. */
+function tradingEquity(cfg, realizedNetInr) {
+	return allocatedSeed(cfg) + realizedNetInr;
+}
 function hurdlePct(cfg) {
 	return cfg.entryTakerFee + cfg.exitTakerFee + cfg.slippageBuffer;
 }
@@ -632,23 +690,28 @@ var Route = createFileRoute("/api/market")({ server: { handlers: { GET: async ()
 	return Response.json(body, { headers: { "cache-control": "no-store" } });
 } } } });
 var rootRouteChildren = {
-	IndexRoute: Route$2.update({
+	IndexRoute: Route$3.update({
 		id: "/",
 		path: "/",
-		getParentRoute: () => Route$3
+		getParentRoute: () => Route$4
+	}),
+	ApiBotZipRoute: Route$2.update({
+		id: "/api/bot-zip",
+		path: "/api/bot-zip",
+		getParentRoute: () => Route$4
 	}),
 	ApiLatencyRoute: Route$1.update({
 		id: "/api/latency",
 		path: "/api/latency",
-		getParentRoute: () => Route$3
+		getParentRoute: () => Route$4
 	}),
 	ApiMarketRoute: Route.update({
 		id: "/api/market",
 		path: "/api/market",
-		getParentRoute: () => Route$3
+		getParentRoute: () => Route$4
 	})
 };
-var routeTree = Route$3._addFileChildren(rootRouteChildren)._addFileTypes();
+var routeTree = Route$4._addFileChildren(rootRouteChildren)._addFileTypes();
 var router_exports = /* @__PURE__ */ __exportAll({ getRouter: () => getRouter });
 function getRouter() {
 	return createRouter({
@@ -657,4 +720,4 @@ function getRouter() {
 	});
 }
 //#endregion
-export { roundQty as a, minQty as i, DEFAULT_CONFIG as n, hurdlePct as r, router_exports as t };
+export { clampAlloc as a, roundQty as c, venueShort as d, applyVenue as i, tradingEquity as l, DEFAULT_CONFIG as n, hurdlePct as o, VENUE_PROFILE as r, minQty as s, router_exports as t, venueLabel as u };
