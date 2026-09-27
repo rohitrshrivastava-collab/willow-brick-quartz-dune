@@ -84,3 +84,12 @@ class Store:
             (payload["id"], json.dumps(payload), payload["exit_ts_ms"]),
         )
         await self.db.commit()
+
+    async def load_trades(self, limit: int = 120) -> list[dict[str, Any]]:
+        cur = await self.db.execute(
+            "SELECT payload FROM trades ORDER BY ts_ms DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [json.loads(payload) for (payload,) in rows]
+

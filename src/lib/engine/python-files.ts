@@ -15,6 +15,9 @@ export const PYTHON_FILES = [
   { path: "telegram_reporter.py", label: "TelegramReporter" },
   { path: "persistence.py", label: "SQLite recovery" },
   { path: "rate_limit.py", label: "Token bucket" },
+  { path: "web_desk.py", label: "Visual desk server" },
+  { path: "web/index.html", label: "Visual desk UI" },
+  { path: "envfile.py", label: ".env writer" },
   { path: "latency_bench.py", label: "Latency benchmark" },
   { path: "deploy/lagforge.service", label: "systemd unit" },
 ] as const;

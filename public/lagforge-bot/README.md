@@ -75,7 +75,9 @@ python latency_bench.py
 python main.py
 ```
 
-Leave that window open. `Ctrl+C` stops it.
+The **visual desk** (same layout as the Grok preview) opens on your computer, wired to this engine. Paper/Live, CS/DCX, wallet, allocation, max-loss, start/pause, blotter, and keys all work there. Keys you paste in that desk are written to local `.env` only.
+
+Leave the terminal window open. `Ctrl+C` stops it.
 
 ---
 

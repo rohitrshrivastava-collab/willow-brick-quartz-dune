@@ -191,14 +191,19 @@ export function DeskApp() {
           ) : null}
           {liveIntent ? (
             <div className="rounded-md bg-short/15 px-3 py-3 text-sm text-pretty">
-              <p className="font-medium text-short">This desk cannot place {venueLabel(engine.cfg.lagVenue)} orders.</p>
+              <p className="font-medium text-short">This Grok tab cannot place {venueLabel(engine.cfg.lagVenue)} orders.</p>
               <p className="mt-1 text-muted">
-                Do not send API keys in chat and do not paste them here. Live trading only runs on
-                the Python bot on your machine: keys in a local .env, PAPER_TRADING=false, and
-                CONFIRM_LIVE=YES. The loop you start in this preview stays paper.
+                It is a paper replica of the desk. Run python main.py on your PC — the same desk
+                opens there, wired to the engine. That copy can go live after keys are saved to
+                local .env and you type YES. Do not paste keys here.
               </p>
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-md bg-elevated px-3 py-3 text-sm text-pretty text-muted">
+              Paper replica in Grok. The Python bot opens this same desk on your machine; that one
+              is PAPER/LIVE and uses all of these controls for real.
+            </div>
+          )}
         </div>
       </header>
 
@@ -1042,7 +1047,7 @@ function ConfigView() {
           </li>
           <li>Create a venv, pip install -r requirements.txt, copy env.example to .env.</li>
           <li>Run python latency_bench.py from the same region you will trade.</li>
-          <li>python main.py with PAPER_TRADING=true for 72 hours.</li>
+          <li>python main.py with PAPER_TRADING=true for 72 hours. The same visual desk opens on your PC and can go live later.</li>
           <li>
             On EC2 Ubuntu in ap-south-1, install the systemd unit, keep paper on, then flip live only
             after the tape beats fees.
@@ -1070,7 +1075,7 @@ function SourceView() {
           <li>No Git? On the GitHub page click Code → Download ZIP, unzip, then File → Open Folder in VS Code.</li>
           <li>In the VS Code terminal: python -m venv .venv, activate it, pip install -r requirements.txt.</li>
           <li>Copy env.example to .env. Keep PAPER_TRADING=true. Add Telegram. Leave CoinSwitch keys empty for paper.</li>
-          <li>python main.py — leave that window open. Ctrl+C stops it.</li>
+          <li>python main.py — the same visual desk opens on your PC (Paper/Live, wallet, keys). Leave the terminal open. Ctrl+C stops it.</li>
           <li>EC2 ap-south-1 and CONFIRM_LIVE=YES only after a 72-hour paper tape that still beats fees.</li>
         </ol>
         <div className="mt-4 flex flex-wrap gap-2">
