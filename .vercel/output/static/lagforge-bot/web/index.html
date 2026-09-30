@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LAGFORGE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #09090b; --surface: #111114; --elevated: #18181c; --inset: #0c0c0e;
+      --fg: #e8e6e1; --muted: #8b8b94; --faint: #5c5c66;
+      --accent: #7d9a8a; --accent-fg: #09090b;
+      --long: #3d8a68; --short: #c45c4a; --warn: #c4a574;
+      --border: color-mix(in oklab, #e8e6e1 12%, transparent);
+      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; border-color: var(--border); }
+    html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); }
+    button:not(:disabled), [role="button"] { cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    body { min-height: 100dvh; overflow-x: hidden; }
+    .wrap { max-width: 87.5rem; margin: 0 auto; padding: 0 1.5rem; }
+    header { border-bottom: 1px solid var(--border); padding: 0.85rem 0 1rem; }
+    h1 { font-size: 1.375rem; font-weight: 500; margin: 0; }
+    .kicker { font-size: 0.6875rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .between { justify-content: space-between; }
+    .seg { display: flex; border-radius: 4px; box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .seg button { height: 2rem; padding: 0 0.75rem; border: 0; background: transparent; color: var(--muted); font: 500 0.6875rem/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; }
+    .seg button.on { background: var(--accent); color: var(--accent-fg); }
+    .seg button.danger.on { background: var(--short); color: var(--fg); }
+    .pill { font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.25rem 0.5rem; border-radius: 4px; color: var(--muted); box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .pill.long { color: var(--long); }
+    .pill.short { color: var(--short); }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-top: 0.75rem; }
+    @media (min-width: 640px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+    @media (min-width: 1024px) { .stats { grid-template-columns: repeat(6, 1fr); } }
+    .stat { background: var(--surface); border-radius: 12px; padding: 0.65rem 0.75rem; box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .stat span { display: block; font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+    .stat b { display: block; margin-top: 0.2rem; font: 400 0.875rem/1.3 var(--mono); font-weight: 400; }
+    .pos { color: var(--long); } .neg { color: var(--short); }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
+    .btn { height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 8px; font: 500 0.875rem var(--sans); }
+    .btn.accent { background: var(--accent); color: var(--accent-fg); }
+    .btn.ghost { background: transparent; color: var(--fg); }
+    .btn.outline { background: transparent; color: var(--fg); box-shadow: 0 0 0 1px var(--border); }
+    .note { font-size: 0.75rem; color: var(--muted); }
+    .banner { margin-top: 0.75rem; background: color-mix(in oklab, var(--short) 15%, transparent); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.875rem; }
+    .banner.warn { background: color-mix(in oklab, var(--warn) 18%, transparent); }
+    nav { position: sticky; top: 0; z-index: 20; background: color-mix(in oklab, var(--bg) 95%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    nav .wrap { display: flex; gap: 0.25rem; overflow-x: auto; padding: 0.5rem 1.5rem; }
+    nav button { height: 2.75rem; flex-shrink: 0; border: 0; border-radius: 8px; padding: 0 0.75rem; background: transparent; color: var(--muted); font: 400 0.875rem var(--sans); }
+    nav button.on { background: var(--elevated); color: var(--fg); }
+    main { padding: 1.25rem 0 2.5rem; }
+    .grid { display: grid; gap: 1rem; }
+    @media (min-width: 1024px) { .g5 { grid-template-columns: repeat(5, 1fr); } .span5 { grid-column: span 5; } .span3 { grid-column: span 3; } .span2 { grid-column: span 2; } }
+    .panel { background: var(--surface); border-radius: 18px; padding: 1.1rem 1.25rem; box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .panel h2 { margin: 0 0 1rem; font-size: 0.875rem; font-weight: 500; display: flex; justify-content: space-between; }
+    .panel h2 em { font-style: normal; font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+    label { display: grid; gap: 0.25rem; font-size: 0.875rem; }
+    label span { font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+    input { height: 2.75rem; border: 0; border-radius: 8px; background: var(--inset); color: var(--fg); padding: 0 0.75rem; font: 400 0.875rem var(--mono); box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chips button { height: 2.25rem; min-width: 2.75rem; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 0.75rem; box-shadow: 0 0 0 1px color-mix(in oklab, #e8e6e1 8%, transparent); }
+    .chips button.on { background: var(--accent); color: var(--accent-fg); box-shadow: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    th { text-align: left; font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 0 0 0.5rem; }
+    td { padding: 0.6rem 0; border-top: 1px solid color-mix(in oklab, #e8e6e1 10%, transparent); font-family: var(--mono); font-size: 0.75rem; }
+    .muted { color: var(--muted); }
+    .scroll { overflow-x: auto; max-width: 100%; }
+    .wallet { background: var(--elevated); border-radius: 8px; padding: 0.85rem; }
+    .wallet b { display: block; font: 400 1.75rem/1.2 var(--mono); margin: 0.35rem 0 0.35rem; }
+    .lock { background: var(--elevated); border-radius: 8px; padding: 0.85rem; margin-top: 1rem; }
+    .lock .fake { display: flex; align-items: center; justify-content: space-between; height: 2.75rem; background: var(--inset); border-radius: 8px; padding: 0 0.75rem; color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
+    .two { display: grid; gap: 1rem; }
+    @media (min-width: 1024px) { .two { grid-template-columns: 1fr 1fr; } }
+    .slot { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; background: var(--elevated); border-radius: 8px; padding: 0.75rem; }
+    @media (min-width: 640px) { .slot { grid-template-columns: repeat(6, 1fr); } }
+    .cell span { display: block; font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+    .alert { border-left: 2px solid var(--accent); padding-left: 0.75rem; margin-bottom: 0.75rem; }
+    footer { border-top: 1px solid var(--border); padding: 0.75rem 0; font-size: 0.6875rem; color: var(--muted); }
+    .err { color: var(--short); font-size: 0.75rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="row between">
+        <div class="row" style="gap:0.75rem;align-items:baseline">
+          <h1>LAGFORGE</h1>
+          <p class="kicker" id="subtitle">BINANCE → …</p>
+        </div>
+        <div class="row">
+          <div class="seg" id="venueSeg">
+            <button data-venue="COINSWITCH">CS</button>
+            <button data-venue="COINDCX">DCX</button>
+          </div>
+          <div class="seg" id="modeSeg">
+            <button data-live="0">Paper</button>
+            <button data-live="1" class="danger">Live</button>
+          </div>
+          <span class="pill" id="venuePill">—</span>
+          <span class="pill" id="statusPill">…</span>
+        </div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="actions">
+        <button class="btn accent" id="loopBtn">Start loop</button>
+        <button class="btn ghost" id="resetBtn">Reset</button>
+        <p class="note" id="meta"></p>
+      </div>
+      <div id="banners"></div>
+    </div>
+  </header>
+  <nav>
+    <div class="wrap" id="nav"></div>
+  </nav>
+  <main>
+    <div class="wrap" id="main"></div>
+  </main>
+  <footer>
+    <div class="wrap row between">
+      <span id="footL">Connecting to local engine…</span>
+      <span id="footR"></span>
+    </div>
+  </footer>
+<script>
+const VIEWS = ["desk","universe","blotter","alerts","reports","config"];
+let view = "desk";
+let state = null;
+let lastError = "";
+const inr = (n, d=2) => {
+  const x = Number(n)||0;
+  const sign = x<0?"-":"";
+  return sign+"₹"+Math.abs(x).toLocaleString("en-IN",{maximumFractionDigits:d,minimumFractionDigits:d});
+};
+const pct = (n) => ((Number(n)||0)*100).toFixed(3)+"%";
+const px = (n) => {
+  n = Number(n)||0;
+  if (!n) return "—";
+  if (n>=1000) return n.toFixed(2);
+  if (n>=10) return n.toFixed(3);
+  return n.toFixed(4);
+};
+const base = (s) => String(s||"").replace(/USDT$/i,"");
+const cls = (n) => Number(n)>0?"pos":Number(n)<0?"neg":"";
+async function send(body) {
+  const res = await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const data = await res.json();
+  if (!data.ok) lastError = data.error || "rejected";
+  else lastError = "";
+  if (data.state) state = data.state;
+  render();
+  return data;
+}
+function render() {
+  const s = state;
+  document.getElementById("nav").innerHTML = VIEWS.map(v =>
+    `<button class="${v===view?"on":""}" data-view="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`
+  ).join("");
+  document.querySelectorAll("#nav button").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
+  if (!s) return;
+  document.getElementById("subtitle").textContent = "BINANCE → "+(s.venueLabel||s.venue);
+  document.querySelectorAll("#venueSeg button").forEach(b => b.classList.toggle("on", b.dataset.venue===s.venue));
+  document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", (b.dataset.live==="1") === (s.mode==="LIVE")));
+  document.getElementById("venuePill").textContent = s.venue==="COINDCX"?"DCX":"CS";
+  const st = s.halted ? "MAX LOSS" : s.loopOn ? "LOOP ON" : "PAUSED";
+  const pill = document.getElementById("statusPill");
+  pill.textContent = st;
+  pill.className = "pill "+(s.halted?"short":s.loopOn?"long":"");
+  document.getElementById("stats").innerHTML = [
+    [`${s.venue==="COINDCX"?"DCX":"CS"} ${s.liveEnabled?"live":"paper"} wallet`, inr(s.walletInr,0)],
+    [`Allocated ${s.cfg.allocPct}%`, inr(s.allocatedInr,0)],
+    ["Session net", inr(s.sessionPnl), cls(s.sessionPnl)],
+    ["Loss remaining", s.cfg.maxSessionLossInr>0?inr(s.lossRemaining,0):"off", s.halted?"neg":""],
+    ["Open slots", `${s.openSlots}/${s.slotCount}`],
+    ["USDT/INR", Number(s.usdtInr).toFixed(3)],
+  ].map(([k,v,c]) => `<div class="stat"><span>${k}</span><b class="${c||""}">${v}</b></div>`).join("");
+  const loopBtn = document.getElementById("loopBtn");
+  loopBtn.textContent = s.loopOn ? "Pause" : "Start loop";
+  loopBtn.className = "btn "+(s.loopOn?"outline":"accent");
+  document.getElementById("meta").textContent =
+    `${inr(s.cfg.startingCapitalInr,0)} wallet · ${s.cfg.allocPct}% in play · ${s.cfg.slotCount} slots · ${s.cfg.leverage}× · hurdle ${pct(s.hurdle)} · ${s.mode}`;
+  const banners = [];
+  if (s.halted) banners.push(`<div class="banner"><b>Session max loss hit.</b> Open slots were flattened. Raise the cap or reset.</div>`);
+  if (s.mode==="LIVE") banners.push(`<div class="banner"><b>LIVE — ${s.venueLabel} market orders are going to the exchange.</b> Switch back to Paper to stop live routing.</div>`);
+  else banners.push(`<div class="banner warn">Paper on this machine. Live needs keys saved below, Confirm live = YES, then the Live switch.</div>`);
+  if (s.notice) banners.push(`<div class="banner">${s.notice}</div>`);
+  if (lastError) banners.push(`<div class="banner">${lastError}</div>`);
+  document.getElementById("banners").innerHTML = banners.join("");
+  document.getElementById("footL").textContent = `Engine ${s.host} · ${s.liveEnabled?"LIVE":"PAPER"} · keys ${s.keysPresent?"saved":"missing"} · confirm ${s.confirmLive?"YES":"no"}`;
+  document.getElementById("footR").textContent = `Calibration ${s.stats.hours.toFixed(2)}h · ${s.stats.trades} tr · WR ${s.stats.winRate.toFixed(0)}%`;
+  const main = document.getElementById("main");
+  if (view==="desk") main.innerHTML = deskView(s);
+  else if (view==="universe") main.innerHTML = uniView(s);
+  else if (view==="blotter") main.innerHTML = blotterView(s);
+  else if (view==="alerts") main.innerHTML = alertsView(s);
+  else if (view==="reports") main.innerHTML = reportsView(s);
+  else main.innerHTML = configView(s);
+  bind();
+}
+function deskView(s) {
+  const pos = s.positions||[];
+  const pairs = s.pairs||[];
+  const alerts = (s.alerts||[]).slice(0,6);
+  const recent = (s.trades||[]).slice(0,8);
+  return `<div class="grid g5">
+    ${capital(s)}
+    <section class="panel span3"><h2>Open positions <em>${pos.length} locked</em></h2>
+      ${pos.length? pos.map(p => `<div class="slot">
+        <div class="cell"><span>Slot</span>${p.side} ${base(p.symbol)}</div>
+        <div class="cell"><span>Fill</span>${px(p.entryPx)}</div>
+        <div class="cell"><span>Target / stop</span>${px(p.targetPx)} · ${px(p.stopPx)}</div>
+        <div class="cell"><span>Qty</span>${p.qty}</div>
+        <div class="cell"><span>Unreal</span><span class="${cls(p.unrealInr)}">${inr(p.unrealInr)}</span></div>
+        <div class="cell"><span>Timeout</span>${p.timeoutRemain>0?p.timeoutRemain.toFixed(0)+"s":"hold"}</div>
+      </div>`).join(""): `<p class="muted">${s.loopOn?"Waiting for a net-spread print above hurdle.":"Start the loop to arm the ten slots."}</p>`}
+    </section>
+    <section class="panel span2"><h2>Calibration <em>72-hour gate</em></h2>
+      <p class="muted">${s.stats.hours.toFixed(2)} hours of tape. Do not go live until gross lead-lag covers fees across Asia, London, and US sessions.</p>
+      <p class="note" style="margin-top:0.75rem">Win rate ${s.stats.winRate.toFixed(0)}% · ${s.stats.trades} trades</p>
+    </section>
+    <section class="panel span3"><h2>Lead / lag tape <em>top of book</em></h2>
+      <div class="scroll"><table><thead><tr><th>Coin</th><th>Binance mid</th><th>${s.venue==="COINDCX"?"DCX":"CS"} bid / ask</th><th>Long Δ</th><th>Short Δ</th><th>Slot</th></tr></thead>
+      <tbody>${pairs.map(p => `<tr>
+        <td>${base(p.symbol)}</td><td>${px(p.leadMid)}</td>
+        <td>${p.lagBid?px(p.lagBid)+" / "+px(p.lagAsk):"buffering"}</td>
+        <td class="${p.longDiv>p.hurdle?"pos":"muted"}">${pct(p.longDiv)}</td>
+        <td class="${p.shortDiv>p.hurdle?"neg":"muted"}">${pct(p.shortDiv)}</td>
+        <td class="muted">${p.skip||"open"}</td>
+      </tr>`).join("")}</tbody></table></div>
+    </section>
+    <section class="panel span2"><h2>Telegram feed <em>local</em></h2>
+      ${alerts.length? alerts.map(a => `<div class="alert"><p class="kicker">${a.kind}</p><p>${a.title}</p><p class="muted">${a.body}</p></div>`).join(""): `<p class="muted">Entries, exits, and hourly summaries land here.</p>`}
+    </section>
+    <section class="panel span5"><h2>Recent fills</h2>
+      ${recent.length? `<div class="scroll"><table><thead><tr><th>Slot</th><th>Entry → exit</th><th>Hold</th><th>Net</th><th>Reason</th></tr></thead><tbody>
+      ${recent.map(t => `<tr><td>${t.side} ${base(t.symbol)}</td><td>${px(t.entry_px)} → ${px(t.exit_px)}</td><td>${Number(t.hold_sec).toFixed(1)}s</td><td class="${cls(t.net_inr)}">${inr(t.net_inr)}</td><td class="muted">${t.reason}${t.paper?" · PAPER":" · LIVE"}</td></tr>`).join("")}
+      </tbody></table></div>`: `<p class="muted">No fills yet.</p>`}
+    </section>
+  </div>`;
+}
+function capital(s) {
+  const c = s.cfg;
+  return `<section class="panel span5"><h2>Capital & session risk <em>${s.venueLabel}</em></h2>
+    <div class="two">
+      <div>
+        <p class="kicker" style="margin:0 0 0.5rem">Lag exchange</p>
+        <div class="seg" id="venueSeg2" style="width:100%">
+          <button data-venue="COINSWITCH" class="${s.venue==="COINSWITCH"?"on":""}" style="flex:1;height:2.75rem">CoinSwitch PRO</button>
+          <button data-venue="COINDCX" class="${s.venue==="COINDCX"?"on":""}" style="flex:1;height:2.75rem">CoinDCX</button>
+        </div>
+        <div class="wallet" style="margin-top:0.75rem">
+          <p class="kicker">${s.venue==="COINDCX"?"DCX":"CS"} wallet</p>
+          <b>${inr(s.walletInr,0)}</b>
+          <p class="muted">${s.liveEnabled?"Live futures wallet from the exchange.":"Paper wallet = seed plus marked PnL. Live wallet appears after keys + Live."}</p>
+        </div>
+      </div>
+      <div class="grid">
+        <label><span>Paper wallet seed (INR)</span><input id="cap" type="number" value="${c.startingCapitalInr}" /></label>
+        <label><span>% of wallet allocated to trade</span><input id="alloc" type="number" value="${c.allocPct}" /></label>
+        <div class="chips" id="allocChips">${[25,50,75,100].map(n => `<button data-alloc="${n}" class="${Number(c.allocPct)===n?"on":""}">${n}%</button>`).join("")}</div>
+        <label><span>Max session loss (INR)</span><input id="maxloss" type="number" value="${c.maxSessionLossInr}" /></label>
+        <button class="btn outline" id="saveCap">Save capital settings</button>
+      </div>
+    </div>
+    ${keysBox(s)}
+  </section>`;
+}
+function keysBox(s) {
+  return `<div class="lock">
+    <p class="kicker">Exchange keys · saved to local .env only</p>
+    <p class="muted" style="margin:0.5rem 0">These stay on this computer. They are never sent back to Grok. Live still needs Confirm live = YES.</p>
+    <label><span>${s.venueLabel} API key</span><input id="apiKey" type="password" autocomplete="off" placeholder="${s.keysPresent?"saved — paste to replace":"paste API key"}" /></label>
+    <label style="margin-top:0.5rem"><span>Secret key</span><input id="secretKey" type="password" autocomplete="off" placeholder="${s.keysPresent?"saved — paste to replace":"paste secret"}" /></label>
+    <label style="margin-top:0.5rem"><span>Confirm live (type YES)</span><input id="confirmLive" type="text" autocomplete="off" placeholder="${s.confirmLive?"YES is already set":"YES"}" /></label>
+    <div class="row" style="margin-top:0.75rem">
+      <button class="btn accent" id="saveKeys">Save keys</button>
+      <p class="note">Keys present: ${s.keysPresent?"yes":"no"} · CONFIRM_LIVE: ${s.confirmLive?"YES":"not set"}</p>
+    </div>
+  </div>`;
+}
+function uniView(s) {
+  return `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+    ${(s.pairs||[]).map(p => `<article class="panel"><h2>${base(p.symbol)}</h2>
+      <p class="muted">Long ${pct(p.longDiv)} · Short ${pct(p.shortDiv)}</p>
+      <p class="note">${p.skip||"eligible"}</p></article>`).join("") || "<p class='muted'>Waiting for books.</p>"}
+  </div>`;
+}
+function blotterView(s) {
+  const t = s.trades||[];
+  if (!t.length) return `<section class="panel"><h2>Trade blotter</h2><p class="muted">Closed trades appear here.</p></section>`;
+  return `<section class="panel"><h2>Trade blotter <em>${t.length}</em></h2>
+    <div class="scroll"><table><thead><tr><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Net INR</th><th>Hold</th><th>Why</th></tr></thead><tbody>
+    ${t.map(x => `<tr><td>${x.side} ${base(x.symbol)}</td><td>${x.qty}</td><td>${px(x.entry_px)}</td><td>${px(x.exit_px)}</td>
+      <td class="${cls(x.net_inr)}">${inr(x.net_inr)}</td><td>${Number(x.hold_sec).toFixed(1)}s</td>
+      <td class="muted">${x.reason}${x.paper?" · PAPER":" · LIVE"}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+}
+function alertsView(s) {
+  const a = s.alerts||[];
+  return `<section class="panel"><h2>Execution alerts</h2>
+    ${a.length? a.map(x => `<div class="alert"><p class="kicker">${x.kind}</p><p>${x.title}</p><p class="muted">${x.body}</p></div>`).join(""): `<p class="muted">The same payload is posted to Telegram.</p>`}
+  </section>`;
+}
+function reportsView(s) {
+  return `<section class="panel"><h2>Hourly archive</h2>
+    ${(s.reports||[]).length? (s.reports||[]).map(r => `<p class="note">Hour ${r.hourIndex||""} · ${JSON.stringify(r)}</p>`).join(""): `<p class="muted">A sealed hour report is written every 60 minutes of runtime.</p>`}
+  </section>`;
+}
+function configView(s) {
+  const c = s.cfg;
+  return `<div class="two">
+    <section class="panel"><h2>Parameters</h2>
+      <div class="grid">
+        <label><span>Starting capital (INR)</span><input id="cap" type="number" value="${c.startingCapitalInr}" /></label>
+        <label><span>Allocation %</span><input id="alloc" type="number" value="${c.allocPct}" /></label>
+        <label><span>Max session loss</span><input id="maxloss" type="number" value="${c.maxSessionLossInr}" /></label>
+        <label><span>Slots</span><input id="slots" type="number" value="${c.slotCount}" /></label>
+        <label><span>Leverage</span><input id="lev" type="number" value="${c.leverage}" /></label>
+        <button class="btn accent" id="saveCap">Save</button>
+      </div>
+    </section>
+    <section class="panel"><h2>Keys</h2>${keysBox(s)}</section>
+  </div>`;
+}
+function bind() {
+  document.querySelectorAll("#venueSeg button, #venueSeg2 button").forEach(b => b.onclick = () => send({action:"set_venue", venue:b.dataset.venue}));
+  document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => {
+    const live = b.dataset.live==="1";
+    const confirm = (document.getElementById("confirmLive")||{}).value || "";
+    send({action:"set_mode", live, confirm});
+  });
+  document.getElementById("loopBtn").onclick = () => send({action: state.loopOn?"pause":"start"});
+  document.getElementById("resetBtn").onclick = () => send({action:"reset"});
+  const saveCap = document.getElementById("saveCap");
+  if (saveCap) saveCap.onclick = () => send({
+    action:"patch",
+    startingCapitalInr: Number(document.getElementById("cap").value),
+    allocPct: Number(document.getElementById("alloc").value),
+    maxSessionLossInr: Number(document.getElementById("maxloss").value),
+    slotCount: Number((document.getElementById("slots")||{value:state.cfg.slotCount}).value),
+    leverage: Number((document.getElementById("lev")||{value:state.cfg.leverage}).value),
+  });
+  document.querySelectorAll("#allocChips button").forEach(b => b.onclick = () => send({action:"patch", allocPct: Number(b.dataset.alloc)}));
+  const sk = document.getElementById("saveKeys");
+  if (sk) sk.onclick = () => send({
+    action:"save_keys",
+    venue: state.venue,
+    apiKey: document.getElementById("apiKey").value,
+    secretKey: document.getElementById("secretKey").value,
+  }).then(() => {
+    const c = (document.getElementById("confirmLive")||{}).value;
+    if (c) return send({action:"set_mode", live:false, confirm:c});
+  });
+}
+function connect() {
+  const proto = location.protocol==="https:"?"wss":"ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onmessage = (ev) => { try { state = JSON.parse(ev.data); render(); } catch(e){} };
+  ws.onclose = () => setTimeout(connect, 1200);
+  ws.onerror = () => ws.close();
+}
+fetch("/api/state").then(r => r.json()).then(s => { state = s; render(); }).catch(() => {});
+connect();
+</script>
+</body>
+</html>

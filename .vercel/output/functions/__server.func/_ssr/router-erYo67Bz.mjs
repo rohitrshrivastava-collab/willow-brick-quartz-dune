@@ -4,7 +4,7 @@ import { n as TriangleAlert } from "../_libs/lucide-react.mjs";
 import { a as union, i as string, n as number, r as object, t as literal } from "../_libs/zod.mjs";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-BQnqGsw6.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-erYo67Bz.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var __defProp = Object.defineProperty;
@@ -308,7 +308,7 @@ function PreviewHostBridge() {
 	}, [router]);
 	return null;
 }
-var styles_default = "/assets/styles-CCzf-_bC.css";
+var styles_default = "/assets/styles-CgnOSTyK.css";
 var APP_NAME = "LAGFORGE";
 var Route$4 = createRootRoute({
 	head: () => ({
@@ -375,7 +375,7 @@ var Route$4 = createRootRoute({
 		})]
 	})
 });
-var $$splitComponentImporter = () => import("./routes-CaT-iJEQ.mjs");
+var $$splitComponentImporter = () => import("./routes-Sp2gkKXg.mjs");
 var Route$3 = createFileRoute("/")({ component: lazyRouteComponent($$splitComponentImporter, "component") });
 var Route$2 = createFileRoute("/api/bot-zip")({ server: { handlers: { GET: async () => {
 	const buf = await readFile(join(process.cwd(), "public", "lagforge-bot.zip"));

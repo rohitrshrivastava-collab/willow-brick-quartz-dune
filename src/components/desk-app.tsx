@@ -7,8 +7,8 @@ import {
   ExternalLink,
   Gauge,
   GitBranch,
+  KeyRound,
   Layers,
-  Lock,
   Pause,
   Play,
   RotateCcw,
@@ -53,6 +53,9 @@ export function DeskApp() {
   const resetSession = useDesk((s) => s.resetSession);
   const liveIntent = useDesk((s) => s.liveIntent);
   const setLiveIntent = useDesk((s) => s.setLiveIntent);
+  const keysSaved = useDesk((s) => s.keysSaved);
+  const confirmLive = useDesk((s) => s.confirmLive);
+  const liveNotice = useDesk((s) => s.liveNotice);
   const status = engine.status;
   const pollMs = engine.cfg.pollMs;
 
@@ -127,15 +130,22 @@ export function DeskApp() {
                 {engine.halted
                   ? "MAX LOSS"
                   : status === "running"
-                    ? "LOOP ON"
+                    ? liveIntent
+                      ? "LIVE ARM"
+                      : "LOOP ON"
                     : status === "paused"
                       ? "PAUSED"
-                      : "ARMED"}
+                      : liveIntent
+                        ? "LIVE READY"
+                        : "ARMED"}
               </Pill>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-            <Stat label={`${venueShort(engine.cfg.lagVenue)} paper wallet`} value={inr(stats.walletInr, 0)} />
+            <Stat
+              label={`${venueShort(engine.cfg.lagVenue)} ${liveIntent ? "wallet" : "paper wallet"}`}
+              value={inr(stats.walletInr, 0)}
+            />
             <Stat label={`Allocated ${engine.cfg.allocPct}%`} value={inr(stats.allocatedInr, 0)} />
             <Stat
               label="Session net"
@@ -160,15 +170,13 @@ export function DeskApp() {
                 variant="accent"
                 onClick={start}
                 disabled={
-                  engine.halted &&
-                  engine.cfg.maxSessionLossInr > 0 &&
-                  stats.lossUsed >= engine.cfg.maxSessionLossInr
+                  (engine.halted &&
+                    engine.cfg.maxSessionLossInr > 0 &&
+                    stats.lossUsed >= engine.cfg.maxSessionLossInr) ||
+                  (liveIntent && (!keysSaved || !confirmLive))
                 }
               >
-                <Play className="size-4" />{" "}
-                {engine.halted && stats.lossUsed >= engine.cfg.maxSessionLossInr
-                  ? "Halted — raise cap or reset"
-                  : "Start paper loop"}
+                <Play className="size-4" /> {startLabel(engine.halted, stats.lossUsed, engine.cfg.maxSessionLossInr, liveIntent, keysSaved, confirmLive)}
               </Button>
             )}
             <Button variant="ghost" onClick={resetSession}>
@@ -177,7 +185,7 @@ export function DeskApp() {
             <p className="min-w-0 basis-full text-xs text-pretty text-muted sm:basis-auto">
               ₹{engine.cfg.startingCapitalInr.toLocaleString("en-IN")} wallet · {engine.cfg.allocPct}% in
               play · {engine.cfg.slotCount} slots · {engine.cfg.leverage}× · hurdle {pct(hurdle)} ·{" "}
-              {venueShort(engine.cfg.lagVenue)}
+              {venueShort(engine.cfg.lagVenue)} · {liveIntent ? "LIVE-ARM" : "PAPER"}
             </p>
           </div>
           {engine.halted ? (
@@ -189,19 +197,23 @@ export function DeskApp() {
               </p>
             </div>
           ) : null}
+          {liveNotice ? (
+            <div className="rounded-md bg-warn/15 px-3 py-3 text-sm text-pretty text-muted">{liveNotice}</div>
+          ) : null}
           {liveIntent ? (
             <div className="rounded-md bg-short/15 px-3 py-3 text-sm text-pretty">
-              <p className="font-medium text-short">This Grok tab cannot place {venueLabel(engine.cfg.lagVenue)} orders.</p>
+              <p className="font-medium text-short">Live-armed — every control on this desk is live.</p>
               <p className="mt-1 text-muted">
-                It is a paper replica of the desk. Run python main.py on your PC — the same desk
-                opens there, wired to the engine. That copy can go live after keys are saved to
-                local .env and you type YES. Do not paste keys here.
+                CS/DCX, wallet, allocation, max-loss, start/pause, blotter, and keys all work here.
+                Fills in this hosted preview stay simulated against the Binance tape. The same desk
+                opened by python main.py on your PC is what sends real {venueLabel(engine.cfg.lagVenue)}{" "}
+                market orders after keys + YES.
               </p>
             </div>
           ) : (
             <div className="rounded-md bg-elevated px-3 py-3 text-sm text-pretty text-muted">
-              Paper replica in Grok. The Python bot opens this same desk on your machine; that one
-              is PAPER/LIVE and uses all of these controls for real.
+              Paper mode. Loop, venue, allocation, and max-loss are fully armed. Switch to Live, save
+              keys, type YES, then start for the live-armed rehearsal.
             </div>
           )}
         </div>
@@ -345,6 +357,21 @@ function DownloadPackButton() {
   );
 }
 
+function startLabel(
+  halted: boolean,
+  lossUsed: number,
+  cap: number,
+  live: boolean,
+  keysSaved: boolean,
+  confirmLive: boolean,
+) {
+  if (halted && cap > 0 && lossUsed >= cap) return "Halted — raise cap or reset";
+  if (live && !keysSaved) return "Save keys to arm live";
+  if (live && !confirmLive) return "Type YES to arm live";
+  if (live) return "Start live-armed loop";
+  return "Start paper loop";
+}
+
 function ModePanel() {
   const liveIntent = useDesk((s) => s.liveIntent);
   const setLiveIntent = useDesk((s) => s.setLiveIntent);
@@ -376,7 +403,7 @@ function ModePanel() {
       </div>
       <p className="mt-2 text-xs text-pretty text-muted">
         {liveIntent
-          ? "Live is the Python bot on your machine only. This preview will not send exchange orders and will not accept API keys."
+          ? "Live-armed uses every control on this desk. Fills in this hosted preview stay simulated. python main.py on your PC is the copy that can send exchange orders."
           : `Paper fills against the live Binance tape with a lagged ${venueLabel(venue)} book. No orders leave this desk.`}
       </p>
     </div>
@@ -408,36 +435,93 @@ function VenueToggle({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function KeysLockPanel() {
+function KeysPanel() {
   const venue = useDesk((s) => s.engine.cfg.lagVenue);
   const liveIntent = useDesk((s) => s.liveIntent);
-  const keyName = venue === "COINDCX" ? "COINDCX_API_KEY / COINDCX_SECRET_KEY" : "COINSWITCH_API_KEY / COINSWITCH_SECRET_KEY";
+  const keysSaved = useDesk((s) => s.keysSaved);
+  const confirmLive = useDesk((s) => s.confirmLive);
+  const saveKeys = useDesk((s) => s.saveKeys);
+  const setConfirmLive = useDesk((s) => s.setConfirmLive);
+  const [api, setApi] = useState("");
+  const [secret, setSecret] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+
+  function onSave() {
+    if (!saveKeys(api, secret)) {
+      setNote("Both API key and secret are required.");
+      return;
+    }
+    const yes = confirm.trim().toUpperCase() === "YES";
+    setConfirmLive(yes);
+    setApi("");
+    setSecret("");
+    setNote(
+      yes
+        ? `Keys flagged for ${venueLabel(venue)}. Confirm live = YES. This tab does not store the secret and cannot send it to the exchange.`
+        : `Keys flagged for ${venueLabel(venue)}. Type YES and save again to arm live.`,
+    );
+  }
+
   return (
     <div className="rounded-md bg-elevated px-3 py-3">
       <div className="flex items-center gap-2">
-        <Lock className="size-4 text-muted" />
-        <p className="text-xxs uppercase tracking-wider text-muted">Exchange keys</p>
+        <KeyRound className="size-4 text-muted" />
+        <p className="text-xxs uppercase tracking-wider text-muted">
+          {venueLabel(venue)} API + secret
+        </p>
       </div>
-      <p className="mt-2 text-sm text-pretty">
-        Keys for {venueLabel(venue)} are not pasted here. This preview is a public page — anything
-        typed into these boxes would sit in the browser.
+      <p className="mt-2 text-sm text-pretty text-muted">
+        Paste keys to arm Live on this desk. This hosted preview never writes them to disk and never
+        posts them. On your PC, the same fields in python main.py save into local .env.
       </p>
       <div className="mt-3 grid gap-2">
-        <div className="flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted">
-          <span>API key</span>
-          <span className="font-mono text-xxs">locked</span>
-        </div>
-        <div className="flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted">
-          <span>Secret key</span>
-          <span className="font-mono text-xxs">locked</span>
-        </div>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xxs uppercase tracking-wider text-muted">API key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={api}
+            placeholder={keysSaved ? "saved — paste to replace" : "paste API key"}
+            onChange={(e) => setApi(e.target.value)}
+            className="h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xxs uppercase tracking-wider text-muted">Secret key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={secret}
+            placeholder={keysSaved ? "saved — paste to replace" : "paste secret"}
+            onChange={(e) => setSecret(e.target.value)}
+            className="h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xxs uppercase tracking-wider text-muted">Confirm live (type YES)</span>
+          <input
+            type="text"
+            autoComplete="off"
+            value={confirm}
+            placeholder={confirmLive ? "YES is set" : "YES"}
+            onChange={(e) => setConfirm(e.target.value)}
+            className="h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onSave}
+          className="inline-flex h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-accent-fg"
+        >
+          Save keys
+        </button>
       </div>
       <p className="mt-3 text-xs text-pretty text-muted">
-        On your PC, put {keyName} in the local .env next to main.py. Keep PAPER_TRADING=true until
-        the 72-hour tape is done, then set PAPER_TRADING=false and CONFIRM_LIVE=YES on that box
-        only.
-        {liveIntent ? " The Live switch on this desk is intent — it still cannot fire orders." : ""}
+        Keys flagged: {keysSaved ? "yes" : "no"} · CONFIRM_LIVE: {confirmLive ? "YES" : "not set"}
+        {liveIntent ? " · Live switch is on" : ""}
       </p>
+      {note ? <p className="mt-2 text-xs text-pretty text-muted">{note}</p> : null}
     </div>
   );
 }
@@ -473,9 +557,9 @@ function CapitalPanel() {
             </div>
             <p className="mt-2 font-mono text-2xl tabular">{inr(stats.walletInr, 0)}</p>
             <p className="mt-1 text-xs text-pretty text-muted">
-              Paper wallet = your starting INR plus this session's marked PnL. A live{" "}
-              {venueLabel(cfg.lagVenue)} balance is fetched by the Python bot when keys are in .env —
-              never by this browser.
+              Wallet = seed plus this session's marked PnL. Allocation % sizes the ten slots from
+              this number. A live {venueLabel(cfg.lagVenue)} futures balance is fetched by python
+              main.py after keys — not by this hosted preview.
             </p>
           </div>
         </div>
@@ -525,7 +609,7 @@ function CapitalPanel() {
         </div>
       </div>
       <div className="mt-4">
-        <KeysLockPanel />
+        <KeysPanel />
       </div>
     </Panel>
   );
@@ -566,6 +650,7 @@ function Panel({
 
 function DeskView() {
   const engine = useDesk((s) => s.engine);
+  const liveIntent = useDesk((s) => s.liveIntent);
   const stats = sessionStats(engine);
   const open = engine.positions;
   const recent = engine.trades.slice(0, 8);
@@ -576,7 +661,7 @@ function DeskView() {
       <CapitalPanel />
       <Panel title="Open positions" kicker={`${open.length} locked`} className="lg:col-span-3">
         {open.length === 0 ? (
-          <Empty text={engine.status === "running" ? "Waiting for a net-spread print above hurdle." : "Start the paper loop to arm the ten slots."} />
+          <Empty text={engine.status === "running" ? "Waiting for a net-spread print above hurdle." : "Start the loop to arm the ten slots."} />
         ) : (
           <ul className="flex flex-col gap-2">
             {open.map((p) => {
@@ -710,7 +795,7 @@ function DeskView() {
 
       <Panel title="Recent fills" kicker={`${recent.length} shown`} className="lg:col-span-5">
         {recent.length === 0 ? (
-          <Empty text="No paper fills yet. Alts with jumpy books clear the hurdle more often than BTC." />
+          <Empty text="No fills yet. Alts with jumpy books clear the hurdle more often than BTC." />
         ) : (
           <div className="overflow-x-auto max-w-full">
             <table className="w-full min-w-[720px] text-left text-sm">
@@ -736,7 +821,10 @@ function DeskView() {
                     </td>
                     <td className="py-2.5">{t.holdSec.toFixed(1)}s</td>
                     <td className={cn("py-2.5", clsDelta(t.netInr))}>{inr(t.netInr)}</td>
-                    <td className="py-2.5 text-muted">{t.reason}</td>
+                    <td className="py-2.5 text-muted">
+                      {t.reason}
+                      {liveIntent ? " · LIVE-ARM" : " · PAPER"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -794,10 +882,11 @@ function UniverseView() {
 
 function BlotterView() {
   const trades = useDesk((s) => s.engine.trades);
+  const liveIntent = useDesk((s) => s.liveIntent);
   if (!trades.length) {
     return (
       <Panel title="Trade blotter">
-        <Empty text="Closed paper trades appear here with fees, hold time, and exit reason." />
+        <Empty text="Closed trades appear here with fees, hold time, and exit reason." />
       </Panel>
     );
   }
@@ -835,7 +924,10 @@ function BlotterView() {
                 <td className={clsDelta(t.netInr)}>{inr(t.netInr)}</td>
                 <td className="py-2.5">{t.holdSec.toFixed(1)}s</td>
                 <td className="py-2.5">{t.latencyMs.toFixed(1)}</td>
-                <td className="py-2.5 text-muted">{t.reason}</td>
+                <td className="py-2.5 text-muted">
+                  {t.reason}
+                  {liveIntent ? " · LIVE-ARM" : " · PAPER"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -977,9 +1069,10 @@ function ArchitectureView() {
 function ConfigView() {
   const cfg = useDesk((s) => s.engine.cfg);
   const patch = useDesk((s) => s.patchConfig);
+  const liveIntent = useDesk((s) => s.liveIntent);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="Paper desk parameters" kicker="always paper in this preview">
+      <Panel title="Desk parameters" kicker={liveIntent ? "live-armed" : "paper"}>
         <ModePanel />
         <div className="mb-4">
           <p className="mb-2 text-xxs uppercase tracking-wider text-muted">Lag exchange</p>
@@ -987,7 +1080,7 @@ function ConfigView() {
         </div>
         <div className="grid gap-3">
           <Field
-            label="Starting capital / paper wallet (INR)"
+            label="Starting capital / wallet seed (INR)"
             value={cfg.startingCapitalInr}
             onChange={(v) => patch({ startingCapitalInr: v })}
           />
@@ -1031,12 +1124,12 @@ function ConfigView() {
           />
         </div>
         <p className="mt-4 text-xs text-pretty text-muted">
-          Never paste CoinSwitch, CoinDCX, or Binance secrets into this desk or into chat. Live keys
-          live only in env vars on the box that runs the Python bot. PAPER_TRADING stays true until
-          you also set CONFIRM_LIVE=YES on that box.
+          Keys pasted here only arm the Live switch on this preview. They are not stored and not sent
+          to CoinSwitch or CoinDCX. For reusable keys, run python main.py — that desk writes .env on
+          your machine.
         </p>
         <div className="mt-4">
-          <KeysLockPanel />
+          <KeysPanel />
         </div>
       </Panel>
       <Panel title="Local & EC2 runbook">

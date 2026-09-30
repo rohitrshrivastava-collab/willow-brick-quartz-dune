@@ -8,6 +8,9 @@ type DeskState = {
   view: AppView;
   hydrated: boolean;
   liveIntent: boolean;
+  keysSaved: boolean;
+  confirmLive: boolean;
+  liveNotice: string | null;
   engine: EngineState;
   feed: { lastOk: boolean; lastError: string | null; lastMs: number; polls: number };
   latency: LatencySample[];
@@ -16,6 +19,8 @@ type DeskState = {
   setLiveIntent: (live: boolean) => void;
   setLagVenue: (venue: LagVenue) => void;
   patchConfig: (partial: Partial<EngineConfig>) => void;
+  saveKeys: (apiKey: string, secretKey: string) => boolean;
+  setConfirmLive: (ok: boolean) => void;
   start: () => void;
   stop: () => void;
   resetSession: () => void;
@@ -25,6 +30,7 @@ type DeskState = {
 };
 
 function nextConfig(cfg: EngineConfig, partial: Partial<EngineConfig>): EngineConfig {
+  // Hosted preview always simulates fills. liveIntent is the PAPER/LIVE control surface.
   let next: EngineConfig = { ...cfg, ...partial, paperTrading: true };
   if (partial.lagVenue && partial.lagVenue !== cfg.lagVenue) {
     next = applyVenue(next, partial.lagVenue);
@@ -45,13 +51,32 @@ export const useDesk = create<DeskState>()(
       view: "desk",
       hydrated: false,
       liveIntent: false,
+      keysSaved: false,
+      confirmLive: false,
+      liveNotice: null,
       engine: createEngineState(DEFAULT_CONFIG),
       feed: { lastOk: false, lastError: null, lastMs: 0, polls: 0 },
       latency: [],
       setView: (view) => set({ view }),
       setHydrated: () => set({ hydrated: true }),
-      setLiveIntent: (live) => set({ liveIntent: live }),
-      setLagVenue: (venue) => get().patchConfig({ lagVenue: venue }),
+      setLiveIntent: (live) =>
+        set({
+          liveIntent: live,
+          liveNotice: live
+            ? "Live-armed mode. Save keys + type YES, then start. This hosted preview still simulates fills."
+            : null,
+        }),
+      setLagVenue: (venue) => {
+        const wasLive = get().liveIntent;
+        get().patchConfig({ lagVenue: venue });
+        if (wasLive) {
+          set({
+            keysSaved: false,
+            confirmLive: false,
+            liveNotice: "Venue changed. Save keys for this exchange before starting live-armed.",
+          });
+        }
+      },
       patchConfig: (partial) =>
         set((s) => {
           const cfg = nextConfig(s.engine.cfg, partial);
@@ -63,8 +88,20 @@ export const useDesk = create<DeskState>()(
             },
           };
         }),
+      saveKeys: (apiKey, secretKey) => {
+        if (!apiKey.trim() || !secretKey.trim()) return false;
+        set({ keysSaved: true, liveNotice: null });
+        return true;
+      },
+      setConfirmLive: (ok) => set({ confirmLive: ok, liveNotice: ok ? null : "Type YES to arm live." }),
       start: () =>
         set((s) => {
+          if (s.liveIntent && !s.keysSaved) {
+            return { ...s, liveNotice: "Paste and save API key + secret for this venue, then start." };
+          }
+          if (s.liveIntent && !s.confirmLive) {
+            return { ...s, liveNotice: "Type YES in Confirm live, save, then start." };
+          }
           if (s.engine.halted) {
             const stats = sessionStats(s.engine);
             const cap = s.engine.cfg.maxSessionLossInr;
@@ -74,6 +111,9 @@ export const useDesk = create<DeskState>()(
           }
           const now = Date.now();
           return {
+            liveNotice: s.liveIntent
+              ? "Loop on · live-armed rehearsal. Fills here stay simulated. python main.py on your PC routes real orders."
+              : null,
             engine: {
               ...s.engine,
               status: "running",
@@ -95,6 +135,7 @@ export const useDesk = create<DeskState>()(
         set((s) => ({
           engine: createEngineState(s.engine.cfg),
           feed: { lastOk: false, lastError: null, lastMs: 0, polls: 0 },
+          liveNotice: null,
         })),
       ingest: (snap) =>
         set((s) => {
@@ -141,7 +182,7 @@ export const useDesk = create<DeskState>()(
         set((s) => ({ latency: [sample, ...s.latency].slice(0, 40) })),
     }),
     {
-      name: "lagforge-desk-v4",
+      name: "lagforge-desk-v5",
       partialize: (s) => ({
         engine: {
           ...s.engine,
@@ -149,7 +190,7 @@ export const useDesk = create<DeskState>()(
           delayBuf: [],
         },
         view: s.view,
-        liveIntent: false,
+        liveIntent: s.liveIntent,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHydrated();

@@ -1,11 +1,11 @@
 import { i as __toESM } from "../_runtime.mjs";
 import { L as require_react, v as require_jsx_runtime } from "../_libs/@tanstack/react-router+[...].mjs";
-import { _ as Activity, a as RotateCcw, c as Lock, d as Gauge, f as ExternalLink, g as Bell, h as ChartColumn, i as ScrollText, l as Layers, m as CodeXml, o as Play, p as Copy, r as Settings2, s as Pause, t as Wallet, u as GitBranch } from "../_libs/lucide-react.mjs";
-import { a as clampAlloc, c as roundQty, d as venueShort, i as applyVenue, l as tradingEquity, n as DEFAULT_CONFIG, o as hurdlePct, r as VENUE_PROFILE, s as minQty, u as venueLabel } from "./router-BQnqGsw6.mjs";
+import { _ as Activity, a as RotateCcw, c as Layers, d as Gauge, f as ExternalLink, g as Bell, h as ChartColumn, i as ScrollText, l as KeyRound, m as CodeXml, o as Play, p as Copy, r as Settings2, s as Pause, t as Wallet, u as GitBranch } from "../_libs/lucide-react.mjs";
+import { a as clampAlloc, c as roundQty, d as venueShort, i as applyVenue, l as tradingEquity, n as DEFAULT_CONFIG, o as hurdlePct, r as VENUE_PROFILE, s as minQty, u as venueLabel } from "./router-erYo67Bz.mjs";
 import { n as clsx, t as cva } from "../_libs/class-variance-authority+clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { n as create, t as persist } from "../_libs/zustand.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-CaT-iJEQ.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-Sp2gkKXg.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function cn(...inputs) {
@@ -565,6 +565,18 @@ var PYTHON_FILES = [
 		label: "Token bucket"
 	},
 	{
+		path: "web_desk.py",
+		label: "Visual desk server"
+	},
+	{
+		path: "web/index.html",
+		label: "Visual desk UI"
+	},
+	{
+		path: "envfile.py",
+		label: ".env writer"
+	},
+	{
 		path: "latency_bench.py",
 		label: "Latency benchmark"
 	},
@@ -589,6 +601,9 @@ var useDesk = create()(persist((set, get) => ({
 	view: "desk",
 	hydrated: false,
 	liveIntent: false,
+	keysSaved: false,
+	confirmLive: false,
+	liveNotice: null,
 	engine: createEngineState(DEFAULT_CONFIG),
 	feed: {
 		lastOk: false,
@@ -599,8 +614,19 @@ var useDesk = create()(persist((set, get) => ({
 	latency: [],
 	setView: (view) => set({ view }),
 	setHydrated: () => set({ hydrated: true }),
-	setLiveIntent: (live) => set({ liveIntent: live }),
-	setLagVenue: (venue) => get().patchConfig({ lagVenue: venue }),
+	setLiveIntent: (live) => set({
+		liveIntent: live,
+		liveNotice: live ? "Live-armed mode. Save keys + type YES, then start. This hosted preview still simulates fills." : null
+	}),
+	setLagVenue: (venue) => {
+		const wasLive = get().liveIntent;
+		get().patchConfig({ lagVenue: venue });
+		if (wasLive) set({
+			keysSaved: false,
+			confirmLive: false,
+			liveNotice: "Venue changed. Save keys for this exchange before starting live-armed."
+		});
+	},
 	patchConfig: (partial) => set((s) => {
 		const cfg = nextConfig(s.engine.cfg, partial);
 		return { engine: {
@@ -609,24 +635,47 @@ var useDesk = create()(persist((set, get) => ({
 			equityInr: tradingEquity(cfg, s.engine.realizedNetInr)
 		} };
 	}),
+	saveKeys: (apiKey, secretKey) => {
+		if (!apiKey.trim() || !secretKey.trim()) return false;
+		set({
+			keysSaved: true,
+			liveNotice: null
+		});
+		return true;
+	},
+	setConfirmLive: (ok) => set({
+		confirmLive: ok,
+		liveNotice: ok ? null : "Type YES to arm live."
+	}),
 	start: () => set((s) => {
+		if (s.liveIntent && !s.keysSaved) return {
+			...s,
+			liveNotice: "Paste and save API key + secret for this venue, then start."
+		};
+		if (s.liveIntent && !s.confirmLive) return {
+			...s,
+			liveNotice: "Type YES in Confirm live, save, then start."
+		};
 		if (s.engine.halted) {
 			const stats = sessionStats(s.engine);
 			const cap = s.engine.cfg.maxSessionLossInr;
 			if (cap > 0 && stats.lossUsed >= cap) return s;
 		}
 		const now = Date.now();
-		return { engine: {
-			...s.engine,
-			status: "running",
-			halted: false,
-			haltReason: null,
-			sessionStart: s.engine.sessionStart ?? now,
-			hourBucket: s.engine.hourBucket.start === 0 ? {
-				start: now,
-				trades: []
-			} : s.engine.hourBucket
-		} };
+		return {
+			liveNotice: s.liveIntent ? "Loop on · live-armed rehearsal. Fills here stay simulated. python main.py on your PC routes real orders." : null,
+			engine: {
+				...s.engine,
+				status: "running",
+				halted: false,
+				haltReason: null,
+				sessionStart: s.engine.sessionStart ?? now,
+				hourBucket: s.engine.hourBucket.start === 0 ? {
+					start: now,
+					trades: []
+				} : s.engine.hourBucket
+			}
+		};
 	}),
 	stop: () => set((s) => ({ engine: {
 		...s.engine,
@@ -639,7 +688,8 @@ var useDesk = create()(persist((set, get) => ({
 			lastError: null,
 			lastMs: 0,
 			polls: 0
-		}
+		},
+		liveNotice: null
 	})),
 	ingest: (snap) => set((s) => {
 		if (s.engine.status !== "running") return { engine: {
@@ -673,7 +723,7 @@ var useDesk = create()(persist((set, get) => ({
 	} })),
 	pushLatency: (sample) => set((s) => ({ latency: [sample, ...s.latency].slice(0, 40) }))
 }), {
-	name: "lagforge-desk-v4",
+	name: "lagforge-desk-v5",
 	partialize: (s) => ({
 		engine: {
 			...s.engine,
@@ -681,7 +731,7 @@ var useDesk = create()(persist((set, get) => ({
 			delayBuf: []
 		},
 		view: s.view,
-		liveIntent: false
+		liveIntent: s.liveIntent
 	}),
 	onRehydrateStorage: () => (state) => {
 		state?.setHydrated();
@@ -785,6 +835,9 @@ function DeskApp() {
 	const resetSession = useDesk((s) => s.resetSession);
 	const liveIntent = useDesk((s) => s.liveIntent);
 	const setLiveIntent = useDesk((s) => s.setLiveIntent);
+	const keysSaved = useDesk((s) => s.keysSaved);
+	const confirmLive = useDesk((s) => s.confirmLive);
+	const liveNotice = useDesk((s) => s.liveNotice);
 	const status = engine.status;
 	const pollMs = engine.cfg.pollMs;
 	(0, import_react.useEffect)(() => {
@@ -854,7 +907,7 @@ function DeskApp() {
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, { children: venueShort(engine.cfg.lagVenue) }),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pill, {
 										tone: engine.halted ? "short" : status === "running" ? "long" : "muted",
-										children: engine.halted ? "MAX LOSS" : status === "running" ? "LOOP ON" : status === "paused" ? "PAUSED" : "ARMED"
+										children: engine.halted ? "MAX LOSS" : status === "running" ? liveIntent ? "LIVE ARM" : "LOOP ON" : status === "paused" ? "PAUSED" : liveIntent ? "LIVE READY" : "ARMED"
 									})
 								]
 							})]
@@ -863,7 +916,7 @@ function DeskApp() {
 							className: "grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
-									label: `${venueShort(engine.cfg.lagVenue)} paper wallet`,
+									label: `${venueShort(engine.cfg.lagVenue)} ${liveIntent ? "wallet" : "paper wallet"}`,
 									value: inr(stats.walletInr, 0)
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stat, {
@@ -900,11 +953,11 @@ function DeskApp() {
 								}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, {
 									variant: "accent",
 									onClick: start,
-									disabled: engine.halted && engine.cfg.maxSessionLossInr > 0 && stats.lossUsed >= engine.cfg.maxSessionLossInr,
+									disabled: engine.halted && engine.cfg.maxSessionLossInr > 0 && stats.lossUsed >= engine.cfg.maxSessionLossInr || liveIntent && (!keysSaved || !confirmLive),
 									children: [
 										/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Play, { className: "size-4" }),
 										" ",
-										engine.halted && stats.lossUsed >= engine.cfg.maxSessionLossInr ? "Halted — raise cap or reset" : "Start paper loop"
+										startLabel(engine.halted, stats.lossUsed, engine.cfg.maxSessionLossInr, liveIntent, keysSaved, confirmLive)
 									]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, {
@@ -927,7 +980,9 @@ function DeskApp() {
 										pct(hurdle),
 										" ·",
 										" ",
-										venueShort(engine.cfg.lagVenue)
+										venueShort(engine.cfg.lagVenue),
+										" · ",
+										liveIntent ? "LIVE-ARM" : "PAPER"
 									]
 								})
 							]
@@ -942,20 +997,28 @@ function DeskApp() {
 								children: "Open slots were flattened. Raise the max-loss cap or reset the session before starting the loop again."
 							})]
 						}) : null,
+						liveNotice ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "rounded-md bg-warn/15 px-3 py-3 text-sm text-pretty text-muted",
+							children: liveNotice
+						}) : null,
 						liveIntent ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "rounded-md bg-short/15 px-3 py-3 text-sm text-pretty",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 								className: "font-medium text-short",
-								children: [
-									"This desk cannot place ",
-									venueLabel(engine.cfg.lagVenue),
-									" orders."
-								]
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								children: "Live-armed — every control on this desk is live."
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 								className: "mt-1 text-muted",
-								children: "Do not send API keys in chat and do not paste them here. Live trading only runs on the Python bot on your machine: keys in a local .env, PAPER_TRADING=false, and CONFIRM_LIVE=YES. The loop you start in this preview stays paper."
+								children: [
+									"CS/DCX, wallet, allocation, max-loss, start/pause, blotter, and keys all work here. Fills in this hosted preview stay simulated against the Binance tape. The same desk opened by python main.py on your PC is what sends real ",
+									venueLabel(engine.cfg.lagVenue),
+									" ",
+									"market orders after keys + YES."
+								]
 							})]
-						}) : null
+						}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "rounded-md bg-elevated px-3 py-3 text-sm text-pretty text-muted",
+							children: "Paper mode. Loop, venue, allocation, and max-loss are fully armed. Switch to Live, save keys, type YES, then start for the live-armed rehearsal."
+						})
 					]
 				})
 			}),
@@ -1086,6 +1149,13 @@ function DownloadPackButton() {
 		}) : null]
 	});
 }
+function startLabel(halted, lossUsed, cap, live, keysSaved, confirmLive) {
+	if (halted && cap > 0 && lossUsed >= cap) return "Halted — raise cap or reset";
+	if (live && !keysSaved) return "Save keys to arm live";
+	if (live && !confirmLive) return "Type YES to arm live";
+	if (live) return "Start live-armed loop";
+	return "Start paper loop";
+}
 function ModePanel() {
 	const liveIntent = useDesk((s) => s.liveIntent);
 	const setLiveIntent = useDesk((s) => s.setLiveIntent);
@@ -1113,7 +1183,7 @@ function ModePanel() {
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 				className: "mt-2 text-xs text-pretty text-muted",
-				children: liveIntent ? "Live is the Python bot on your machine only. This preview will not send exchange orders and will not accept API keys." : `Paper fills against the live Binance tape with a lagged ${venueLabel(venue)} book. No orders leave this desk.`
+				children: liveIntent ? "Live-armed uses every control on this desk. Fills in this hosted preview stay simulated. python main.py on your PC is the copy that can send exchange orders." : `Paper fills against the live Binance tape with a lagged ${venueLabel(venue)} book. No orders leave this desk.`
 			})
 		]
 	});
@@ -1131,53 +1201,109 @@ function VenueToggle({ compact = false }) {
 		}, id))
 	});
 }
-function KeysLockPanel() {
+function KeysPanel() {
 	const venue = useDesk((s) => s.engine.cfg.lagVenue);
 	const liveIntent = useDesk((s) => s.liveIntent);
-	const keyName = venue === "COINDCX" ? "COINDCX_API_KEY / COINDCX_SECRET_KEY" : "COINSWITCH_API_KEY / COINSWITCH_SECRET_KEY";
+	const keysSaved = useDesk((s) => s.keysSaved);
+	const confirmLive = useDesk((s) => s.confirmLive);
+	const saveKeys = useDesk((s) => s.saveKeys);
+	const setConfirmLive = useDesk((s) => s.setConfirmLive);
+	const [api, setApi] = (0, import_react.useState)("");
+	const [secret, setSecret] = (0, import_react.useState)("");
+	const [confirm, setConfirm] = (0, import_react.useState)("");
+	const [note, setNote] = (0, import_react.useState)(null);
+	function onSave() {
+		if (!saveKeys(api, secret)) {
+			setNote("Both API key and secret are required.");
+			return;
+		}
+		const yes = confirm.trim().toUpperCase() === "YES";
+		setConfirmLive(yes);
+		setApi("");
+		setSecret("");
+		setNote(yes ? `Keys flagged for ${venueLabel(venue)}. Confirm live = YES. This tab does not store the secret and cannot send it to the exchange.` : `Keys flagged for ${venueLabel(venue)}. Type YES and save again to arm live.`);
+	}
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "rounded-md bg-elevated px-3 py-3",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex items-center gap-2",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Lock, { className: "size-4 text-muted" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeyRound, { className: "size-4 text-muted" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 					className: "text-xxs uppercase tracking-wider text-muted",
-					children: "Exchange keys"
+					children: [venueLabel(venue), " API + secret"]
 				})]
 			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-				className: "mt-2 text-sm text-pretty",
-				children: [
-					"Keys for ",
-					venueLabel(venue),
-					" are not pasted here. This preview is a public page — anything typed into these boxes would sit in the browser."
-				]
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-2 text-sm text-pretty text-muted",
+				children: "Paste keys to arm Live on this desk. This hosted preview never writes them to disk and never posts them. On your PC, the same fields in python main.py save into local .env."
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "mt-3 grid gap-2",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "API key" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "font-mono text-xxs",
-						children: "locked"
-					})]
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex h-11 items-center justify-between rounded-md bg-inset px-3 text-sm text-muted",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Secret key" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "font-mono text-xxs",
-						children: "locked"
-					})]
-				})]
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "grid gap-1 text-sm",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-xxs uppercase tracking-wider text-muted",
+							children: "API key"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "password",
+							autoComplete: "off",
+							value: api,
+							placeholder: keysSaved ? "saved — paste to replace" : "paste API key",
+							onChange: (e) => setApi(e.target.value),
+							className: "h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "grid gap-1 text-sm",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-xxs uppercase tracking-wider text-muted",
+							children: "Secret key"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "password",
+							autoComplete: "off",
+							value: secret,
+							placeholder: keysSaved ? "saved — paste to replace" : "paste secret",
+							onChange: (e) => setSecret(e.target.value),
+							className: "h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "grid gap-1 text-sm",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-xxs uppercase tracking-wider text-muted",
+							children: "Confirm live (type YES)"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "text",
+							autoComplete: "off",
+							value: confirm,
+							placeholder: confirmLive ? "YES is set" : "YES",
+							onChange: (e) => setConfirm(e.target.value),
+							className: "h-11 w-full rounded-md bg-inset px-3 font-mono text-sm text-fg shadow-[var(--shadow-border)]"
+						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: onSave,
+						className: "inline-flex h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-accent-fg",
+						children: "Save keys"
+					})
+				]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 				className: "mt-3 text-xs text-pretty text-muted",
 				children: [
-					"On your PC, put ",
-					keyName,
-					" in the local .env next to main.py. Keep PAPER_TRADING=true until the 72-hour tape is done, then set PAPER_TRADING=false and CONFIRM_LIVE=YES on that box only.",
-					liveIntent ? " The Live switch on this desk is intent — it still cannot fire orders." : ""
+					"Keys flagged: ",
+					keysSaved ? "yes" : "no",
+					" · CONFIRM_LIVE: ",
+					confirmLive ? "YES" : "not set",
+					liveIntent ? " · Live switch is on" : ""
 				]
-			})
+			}),
+			note ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-2 text-xs text-pretty text-muted",
+				children: note
+			}) : null
 		]
 	});
 }
@@ -1221,10 +1347,9 @@ function CapitalPanel() {
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 							className: "mt-1 text-xs text-pretty text-muted",
 							children: [
-								"Paper wallet = your starting INR plus this session's marked PnL. A live",
-								" ",
+								"Wallet = seed plus this session's marked PnL. Allocation % sizes the ten slots from this number. A live ",
 								venueLabel(cfg.lagVenue),
-								" balance is fetched by the Python bot when keys are in .env — never by this browser."
+								" futures balance is fetched by python main.py after keys — not by this hosted preview."
 							]
 						})
 					]
@@ -1280,7 +1405,7 @@ function CapitalPanel() {
 			})]
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "mt-4",
-			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysLockPanel, {})
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysPanel, {})
 		})]
 	});
 }
@@ -1313,6 +1438,7 @@ function Panel({ title, kicker, children, className }) {
 }
 function DeskView() {
 	const engine = useDesk((s) => s.engine);
+	const liveIntent = useDesk((s) => s.liveIntent);
 	const stats = sessionStats(engine);
 	const open = engine.positions;
 	const recent = engine.trades.slice(0, 8);
@@ -1325,7 +1451,7 @@ function DeskView() {
 				title: "Open positions",
 				kicker: `${open.length} locked`,
 				className: "lg:col-span-3",
-				children: open.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: engine.status === "running" ? "Waiting for a net-spread print above hurdle." : "Start the paper loop to arm the ten slots." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+				children: open.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: engine.status === "running" ? "Waiting for a net-spread print above hurdle." : "Start the loop to arm the ten slots." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
 					className: "flex flex-col gap-2",
 					children: open.map((p) => {
 						const pair = engine.pairs[p.symbol];
@@ -1528,7 +1654,7 @@ function DeskView() {
 				title: "Recent fills",
 				kicker: `${recent.length} shown`,
 				className: "lg:col-span-5",
-				children: recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "No paper fills yet. Alts with jumpy books clear the hurdle more often than BTC." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				children: recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "No fills yet. Alts with jumpy books clear the hurdle more often than BTC." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "overflow-x-auto max-w-full",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
 						className: "w-full min-w-[720px] text-left text-sm",
@@ -1596,9 +1722,9 @@ function DeskView() {
 										className: cn("py-2.5", clsDelta(t.netInr)),
 										children: inr(t.netInr)
 									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
 										className: "py-2.5 text-muted",
-										children: t.reason
+										children: [t.reason, liveIntent ? " · LIVE-ARM" : " · PAPER"]
 									})
 								]
 							}, t.id))
@@ -1681,9 +1807,10 @@ function UniverseView() {
 }
 function BlotterView() {
 	const trades = useDesk((s) => s.engine.trades);
+	const liveIntent = useDesk((s) => s.liveIntent);
 	if (!trades.length) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Panel, {
 		title: "Trade blotter",
-		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "Closed paper trades appear here with fees, hold time, and exit reason." })
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "Closed trades appear here with fees, hold time, and exit reason." })
 	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Panel, {
 		title: "Trade blotter",
@@ -1792,9 +1919,9 @@ function BlotterView() {
 								className: "py-2.5",
 								children: t.latencyMs.toFixed(1)
 							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
 								className: "py-2.5 text-muted",
-								children: t.reason
+								children: [t.reason, liveIntent ? " · LIVE-ARM" : " · PAPER"]
 							})
 						]
 					}, t.id))
@@ -1987,11 +2114,12 @@ function ArchitectureView() {
 function ConfigView() {
 	const cfg = useDesk((s) => s.engine.cfg);
 	const patch = useDesk((s) => s.patchConfig);
+	const liveIntent = useDesk((s) => s.liveIntent);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "grid gap-4 lg:grid-cols-2",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Panel, {
-			title: "Paper desk parameters",
-			kicker: "always paper in this preview",
+			title: "Desk parameters",
+			kicker: liveIntent ? "live-armed" : "paper",
 			children: [
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ModePanel, {}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -2005,7 +2133,7 @@ function ConfigView() {
 					className: "grid gap-3",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-							label: "Starting capital / paper wallet (INR)",
+							label: "Starting capital / wallet seed (INR)",
 							value: cfg.startingCapitalInr,
 							onChange: (v) => patch({ startingCapitalInr: v })
 						}),
@@ -2062,11 +2190,11 @@ function ConfigView() {
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "mt-4 text-xs text-pretty text-muted",
-					children: "Never paste CoinSwitch, CoinDCX, or Binance secrets into this desk or into chat. Live keys live only in env vars on the box that runs the Python bot. PAPER_TRADING stays true until you also set CONFIRM_LIVE=YES on that box."
+					children: "Keys pasted here only arm the Live switch on this preview. They are not stored and not sent to CoinSwitch or CoinDCX. For reusable keys, run python main.py — that desk writes .env on your machine."
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "mt-4",
-					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysLockPanel, {})
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeysPanel, {})
 				})
 			]
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Panel, {
@@ -2085,7 +2213,7 @@ function ConfigView() {
 					] }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Create a venv, pip install -r requirements.txt, copy env.example to .env." }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Run python latency_bench.py from the same region you will trade." }),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py with PAPER_TRADING=true for 72 hours." }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py with PAPER_TRADING=true for 72 hours. The same visual desk opens on your PC and can go live later." }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "On EC2 Ubuntu in ap-south-1, install the systemd unit, keep paper on, then flip live only after the tape beats fees." })
 				]
 			})
@@ -2116,7 +2244,7 @@ function SourceView() {
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "No Git? On the GitHub page click Code → Download ZIP, unzip, then File → Open Folder in VS Code." }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "In the VS Code terminal: python -m venv .venv, activate it, pip install -r requirements.txt." }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "Copy env.example to .env. Keep PAPER_TRADING=true. Add Telegram. Leave CoinSwitch keys empty for paper." }),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py — leave that window open. Ctrl+C stops it." }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "python main.py — the same visual desk opens on your PC (Paper/Live, wallet, keys). Leave the terminal open. Ctrl+C stops it." }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: "EC2 ap-south-1 and CONFIRM_LIVE=YES only after a 72-hour paper tape that still beats fees." })
 					]
 				}),

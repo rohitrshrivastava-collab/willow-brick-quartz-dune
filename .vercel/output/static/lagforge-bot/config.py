@@ -104,6 +104,10 @@ class Config:
     synthetic_lag_ms: int = 220
     sqlite_path: str = "lagforge.db"
     log_level: str = "INFO"
+    desk_host: str = "127.0.0.1"
+    desk_port: int = 8787
+    open_desk: bool = True
+    env_path: str = ".env"
     candidates: tuple[str, ...] = field(default_factory=lambda: DEFAULT_CANDIDATES)
     rest_rate: float = 15 / 60  # 15 authenticated REST calls / minute
 
@@ -165,5 +169,9 @@ def load_config() -> Config:
         synthetic_lag_ms=_int("SYNTHETIC_LAG_MS", 220),
         sqlite_path=os.getenv("SQLITE_PATH", "lagforge.db"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        desk_host=os.getenv("DESK_HOST", "127.0.0.1"),
+        desk_port=_int("DESK_PORT", 8787),
+        open_desk=_bool("OPEN_DESK", True),
+        env_path=os.getenv("ENV_PATH", ".env"),
     )
     return cfg
